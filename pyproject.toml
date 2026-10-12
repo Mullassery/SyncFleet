@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "syncfleet"
+dynamic = ["version"]
+description = "Python wrapper for the SyncFleet peer-to-peer edge database synchronization CLI"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "SyncFleet Contributors" }]
+keywords = ["sync", "p2p", "edge", "sqlite", "replication", "iot", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Database",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Mullassery/SyncFleet"
+Repository = "https://github.com/Mullassery/SyncFleet"
+Issues = "https://github.com/Mullassery/SyncFleet/issues"
+Changelog = "https://github.com/Mullassery/SyncFleet/blob/main/CHANGELOG.md"
+
+[project.scripts]
+syncfleet = "syncfleet.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["syncfleet*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+syncfleet = ["bin/*", "py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "syncfleet.__version__" }

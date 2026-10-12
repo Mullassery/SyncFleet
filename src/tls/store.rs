@@ -77,8 +77,7 @@ pub fn remove_cert(path: &Path, fp: &str) -> Result<bool> {
             remaining.push(cert);
         }
     }
-    let original_count = rustls_pemfile::certs(&mut &data[..])
-        .count();
+    let original_count = rustls_pemfile::certs(&mut &data[..]).count();
     if remaining.len() == original_count {
         return Ok(false);
     }

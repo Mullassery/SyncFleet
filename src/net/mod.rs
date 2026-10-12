@@ -80,6 +80,7 @@ pub fn spawn_server(
     Ok(ServerHandle { local_addr, task })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection(
     tcp: TcpStream,
     peer_addr: std::net::SocketAddr,
@@ -90,12 +91,23 @@ async fn handle_connection(
     idle_timeout: std::time::Duration,
     handshake_timeout: std::time::Duration,
 ) {
-    let result = run_peering(tcp, peer_addr, acceptor, pool, node_name, max_message_size, idle_timeout, handshake_timeout).await;
+    let result = run_peering(
+        tcp,
+        peer_addr,
+        acceptor,
+        pool,
+        node_name,
+        max_message_size,
+        idle_timeout,
+        handshake_timeout,
+    )
+    .await;
     if let Err(e) = result {
         tracing::debug!(peer = %peer_addr, error = %e, "peering connection closed");
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_peering(
     tcp: TcpStream,
     _peer_addr: std::net::SocketAddr,
@@ -109,7 +121,7 @@ async fn run_peering(
     let tls = tokio::time::timeout(handshake_timeout, acceptor.accept(tcp))
         .await
         .map_err(|_| TransportError::Timeout)?
-        .map_err(|e| TransportError::Io(e))?;
+        .map_err(TransportError::Io)?;
 
     let peer_node_id = authenticated_node_id(&tls)?;
 
@@ -127,9 +139,9 @@ async fn run_peering(
         Ok(_) => Err(SyncFleetError::Transport(TransportError::Protocol(
             "unsupported version".to_string(),
         ))),
-        Err(e) => Err(SyncFleetError::Transport(TransportError::Protocol(format!(
-            "bad hello: {e}"
-        )))),
+        Err(e) => Err(SyncFleetError::Transport(TransportError::Protocol(
+            format!("bad hello: {e}"),
+        ))),
     };
 
     match reply {
@@ -162,23 +174,25 @@ async fn handle_hello(
     hello: &Hello,
 ) -> Result<HelloReply> {
     if hello.node_id != peer_node_id {
-        return Err(SyncFleetError::Transport(TransportError::AuthenticationFailed(format!(
-            "certificate node_id {} does not match hello node_id {}",
-            peer_node_id, hello.node_id
-        ))));
+        return Err(SyncFleetError::Transport(
+            TransportError::AuthenticationFailed(format!(
+                "certificate node_id {} does not match hello node_id {}",
+                peer_node_id, hello.node_id
+            )),
+        ));
     }
 
     // Permission required for any dataset: read (bit 1).
     let mut authorized = Vec::new();
     for dataset in &hello.datasets {
-        if crate::storage::peers::is_authorized(pool, &peer_node_id, dataset, 1).await? {
+        if crate::storage::peers::is_authorized(pool, peer_node_id, dataset, 1).await? {
             authorized.push(dataset.clone());
         }
     }
     if authorized.is_empty() {
-        return Err(SyncFleetError::Transport(TransportError::PeerRejected(format!(
-            "{peer_node_id} has no active authorization"
-        ))));
+        return Err(SyncFleetError::Transport(TransportError::PeerRejected(
+            format!("{peer_node_id} has no active authorization"),
+        )));
     }
 
     Ok(HelloReply {
@@ -213,7 +227,10 @@ async fn read_message(
     }
     let size = u32::from_be_bytes(len) as usize;
     if size > max_message_size {
-        return Err(SyncFleetError::Transport(TransportError::MessageTooLarge { size, limit: max_message_size }));
+        return Err(SyncFleetError::Transport(TransportError::MessageTooLarge {
+            size,
+            limit: max_message_size,
+        }));
     }
     let mut buf = vec![0u8; size];
     stream.read_exact(&mut buf).await.map_err(io_timeout)?;
@@ -258,8 +275,14 @@ pub async fn connect(
         .map_err(|_| TransportError::Timeout)?
         .map_err(TransportError::Io)?;
 
-    let certs = tls.get_ref().1.peer_certificates().ok_or(TransportError::MissingPeerCertificate)?;
-    let leaf = certs.first().ok_or(TransportError::MissingPeerCertificate)?;
+    let certs = tls
+        .get_ref()
+        .1
+        .peer_certificates()
+        .ok_or(TransportError::MissingPeerCertificate)?;
+    let leaf = certs
+        .first()
+        .ok_or(TransportError::MissingPeerCertificate)?;
     let server_node_id = cert::node_id_from_cert(leaf.as_ref())?;
     if server_node_id != expected_peer_node_id {
         return Err(SyncFleetError::Transport(
@@ -277,7 +300,9 @@ pub async fn connect(
     let reply: HelloReply = serde_json::from_slice(&reply)?;
     if !reply.ok {
         return Err(SyncFleetError::Transport(TransportError::PeerRejected(
-            reply.error.unwrap_or_else(|| "peer rejected connection".to_string()),
+            reply
+                .error
+                .unwrap_or_else(|| "peer rejected connection".to_string()),
         )));
     }
     Ok(reply)

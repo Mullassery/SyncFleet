@@ -56,6 +56,28 @@ syncfleet daemon start
 syncfleet status
 ```
 
+## Install
+
+### From PyPI (Python wrapper)
+
+A thin, dependency-free Python wrapper is published to PyPI. It forwards to the
+native `syncfleet` executable, which it finds in this order:
+
+1. `SYNCFLEET_BIN` environment variable (path to the executable),
+2. a binary bundled inside the installed wheel,
+3. `syncfleet` on your `PATH`.
+
+```bash
+pip install syncfleet
+syncfleet --help
+```
+
+Wheels published by the release workflow bundle the native binary for their
+platform, so `pip install syncfleet` works with no extra setup. If you install
+the pure-Python wheel without a bundled binary, install the CLI separately and
+point `SYNCFLEET_BIN` at it.
+
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)

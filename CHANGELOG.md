@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `integrity_check_on_startup`), and peer-ack-guarded journal compaction
 - `doctor --full` reports journal/integrity state; `doctor --repair` performs a
   WAL checkpoint and safe compaction
+- Phase 3 (in progress): TLS 1.3 mutual-authentication transport scaffolding
+  (`src/tls`, `src/net`), self-signed Ed25519 node certificates, a pinned
+  trust-on-first-use trust store, single-use signed enrollment tokens, and the
+  `003_peering.sql` migration
+- Python wrapper package (`python/syncfleet`) with a `syncfleet` console script
+  that forwards to the native executable; published to PyPI
+- `scripts/release.py` to bump `Cargo.toml`, the Python wrapper version and the
+  changelog together, and `scripts/build_vendor.py` to build platform wheels
+  that bundle the native binary
+- `.github/workflows/pypi.yml` builds per-OS wheels (Linux, macOS x86_64/arm64,
+  Windows) and publishes to PyPI on `v*` tags via trusted publishing
 
 ### Changed
 - Configuration now loads with developer-friendly defaults

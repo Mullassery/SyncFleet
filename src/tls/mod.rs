@@ -52,7 +52,7 @@ pub fn server_config(store: &TlsStore, roots: Arc<RootCertStore>) -> Result<Serv
     let config = ServerConfig::builder_with_protocol_versions(&[TLS13])
         .with_client_cert_verifier(verifier)
         .with_single_cert(store.cert_chain.clone(), store.key.clone_key())
-        .map_err(|e| TransportError::Tls(e))?;
+        .map_err(TransportError::Tls)?;
     Ok(config)
 }
 
@@ -68,7 +68,7 @@ pub fn client_config(store: &TlsStore, roots: Arc<RootCertStore>) -> Result<Clie
     let config = ClientConfig::builder_with_protocol_versions(&[TLS13])
         .with_webpki_verifier(verifier)
         .with_client_auth_cert(store.cert_chain.clone(), store.key.clone_key())
-        .map_err(|e| TransportError::Tls(e))?;
+        .map_err(TransportError::Tls)?;
     Ok(config)
 }
 

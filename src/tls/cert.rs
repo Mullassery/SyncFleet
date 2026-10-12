@@ -50,8 +50,8 @@ pub fn node_id_from_cert(der: &[u8]) -> Result<String> {
     let san = cert
         .subject_alternative_name()
         .map_err(|e| TransportError::Certificate(format!("SAN parse failed: {e}")))?;
-    let san = san
-        .ok_or_else(|| TransportError::Certificate("certificate has no SAN".to_string()))?;
+    let san =
+        san.ok_or_else(|| TransportError::Certificate("certificate has no SAN".to_string()))?;
 
     for name in &san.value.general_names {
         if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
@@ -60,10 +60,10 @@ pub fn node_id_from_cert(der: &[u8]) -> Result<String> {
             }
         }
     }
-    Err(TransportError::Certificate(
-        "certificate SAN has no node_<node_id> entry".to_string(),
+    Err(
+        TransportError::Certificate("certificate SAN has no node_<node_id> entry".to_string())
+            .into(),
     )
-    .into())
 }
 
 pub fn subject_name(der: &[u8]) -> Result<String> {
@@ -141,7 +141,9 @@ pub fn load_cert_pem(path: &Path) -> Result<CertMaterial> {
         .transpose()
         .map_err(|e| SyncFleetError::Transport(TransportError::Certificate(e.to_string())))?
         .ok_or_else(|| {
-            SyncFleetError::Transport(TransportError::CertificateNotFound(path.display().to_string()))
+            SyncFleetError::Transport(TransportError::CertificateNotFound(
+                path.display().to_string(),
+            ))
         })?;
 
     let der = cert.as_ref().to_vec();

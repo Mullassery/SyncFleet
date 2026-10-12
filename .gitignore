@@ -1,3 +1,28 @@
+# Rust build output
 /target
 
+# Graphify analysis output
 graphify-out/
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Vendored native binary (built locally or in CI, never committed)
+python/syncfleet/bin/syncfleet
+python/syncfleet/bin/syncfleet.exe
+
+# macOS / editor cruft
+.DS_Store
+.claude/
+.idea/
+.vscode/
