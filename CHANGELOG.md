@@ -51,7 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changelog together, and `scripts/build_vendor.py` to build platform wheels
   that bundle the native binary
 - `.github/workflows/pypi.yml` builds per-OS wheels (Linux, macOS x86_64/arm64,
-  Windows) and publishes to PyPI on `v*` tags via trusted publishing
+  Windows) and publishes to PyPI on `v*` tags using the `PYPI_API_TOKEN`
+  repository secret
 
 ### Changed
 - Configuration now loads with developer-friendly defaults
