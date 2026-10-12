@@ -58,22 +58,24 @@
 ## Phase 3: Secure Peer Communication
 
 ### Milestone 3.1 - TLS Transport
-- [ ] TLS 1.3 with mutual authentication (using `rustls`)
-- [ ] Certificate generation and management
-- [ ] Certificate pinning / trust-on-first-use
-- [ ] Connection timeouts and bounded messages
+- [x] TLS 1.3 with mutual authentication (using `rustls`)
+- [x] Certificate generation and management
+- [x] Certificate pinning / trust-on-first-use
+- [x] Connection timeouts and bounded messages
 
 ### Milestone 3.2 - Peer Enrollment
-- [ ] Single-use enrollment token generation
-- [ ] Token validation and exchange
-- [ ] Peer certificate issuance
-- [ ] `syncfleet peer pair` command
+- [x] Single-use enrollment token generation
+- [x] Token validation and exchange
+- [x] Peer certificate issuance
+- [x] `syncfleet peer pair` command
+- [x] `syncfleet peer token|redeem|export-cert|import-cert|certs` commands
 
 ### Milestone 3.3 - Authorization
-- [ ] Per-dataset ACLs (read/write/admin)
-- [ ] Authorization enforcement on every operation
-- [ ] Peer revocation (`syncfleet peer revoke`)
-- [ ] Revocation checking on connection
+- [x] Per-dataset ACLs (read/write/admin)
+- [x] Authorization enforced on the peering handshake (per-operation
+  enforcement lands with replication in Phase 4)
+- [x] Peer revocation (`syncfleet peer revoke`)
+- [x] Revocation checking on connection
 
 ## Phase 4: Incremental Replication
 

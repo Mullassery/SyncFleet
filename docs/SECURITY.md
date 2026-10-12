@@ -85,6 +85,26 @@ Admin                          New Node
 - Never logged or persisted in plaintext
 - Delivered via secure channel (QR code, encrypted file, SSH)
 
+### Implemented trust model (trust-on-first-use)
+
+The enrollment token is a self-contained, signed object:
+
+- It carries the issuer's node id and DER certificate and is signed with the
+  certificate's Ed25519 key (`sf1:<hex>`). Verification checks the signature
+  against the embedded certificate's public key, so the certificate is bound to
+  the node id it claims (`node_<node_id>` SAN) without any prior shared secret.
+- Trust is established by **pinning**: when a peer redeems a token, the issuer's
+  certificate is added to the local trust store (`certs/ca.pem`) and its
+  fingerprint recorded. Conversely, the issuer pins the redeemer's certificate
+  via `peer import-cert`. Both sides are mutually authenticated at the TLS 1.3
+  layer against this pinned set, so an unknown or changed certificate is
+  rejected even if it chains to nothing.
+
+This is deliberately **trust-on-first-use**: the first successful enrollment of
+a peer establishes trust, and there is no external CA or registry. Operators
+must confirm certificate fingerprints out-of-band, and rotate/revoke by removing
+the pinned certificate and the peer authorization.
+
 ## Authorization Model
 
 ### Dataset-Level ACLs

@@ -177,6 +177,24 @@ pub fn load_private_key_pem(path: &Path) -> Result<rustls::pki_types::PrivateKey
         })
 }
 
+/// Load the node's Ed25519 signing key from the PKCS#8 PEM private key file,
+/// so enrollment tokens can be signed with the same key the certificate
+/// certifies (and therefore verified against the certificate public key).
+pub fn signing_key_from_pem(path: &Path) -> Result<ed25519_dalek::SigningKey> {
+    use ed25519_dalek::pkcs8::DecodePrivateKey;
+
+    let data = std::fs::read_to_string(path).map_err(|e| {
+        SyncFleetError::Transport(TransportError::CertificateNotFound(format!(
+            "{}: {e}",
+            path.display()
+        )))
+    })?;
+    let parsed = pem::parse(data.as_bytes())
+        .map_err(|e| SyncFleetError::Transport(TransportError::Certificate(format!("key: {e}"))))?;
+    ed25519_dalek::SigningKey::from_pkcs8_der(&parsed.contents)
+        .map_err(|e| SyncFleetError::Transport(TransportError::Certificate(format!("key: {e}"))))
+}
+
 /// Generate certificate material and persist cert + private key (0600) so
 /// that runtime connections never require the identity passphrase.
 pub fn generate_and_store(

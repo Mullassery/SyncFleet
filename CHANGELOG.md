@@ -31,10 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `integrity_check_on_startup`), and peer-ack-guarded journal compaction
 - `doctor --full` reports journal/integrity state; `doctor --repair` performs a
   WAL checkpoint and safe compaction
+- Phase 2 completed: `apply_remote_operation` applies a peer operation
+  atomically — checksum validation, idempotent dedupe by operation id, journal
+  storage, and monotonic checkpoint advance (resolves TD-009)
 - Phase 3 (in progress): TLS 1.3 mutual-authentication transport scaffolding
   (`src/tls`, `src/net`), self-signed Ed25519 node certificates, a pinned
   trust-on-first-use trust store, single-use signed enrollment tokens, and the
   `003_peering.sql` migration
+- Phase 3 CLI wiring: `init` now generates the node's TLS material; new
+  `peer token|redeem|export-cert|import-cert|certs` commands issue/redeem
+  enrollment tokens, pin peer certificates, and authorize peers
+- Integration tests for TLS (`tests/tls.rs`: cert round-trip, trust store,
+  enrollment sign/verify/tamper/expiry) and peering (`tests/net.rs`: loopback
+  mutual-TLS exchange, unauthorized/mismatched/unpinned rejection); CLI tests
+  cover the enrollment-token flow (38 tests total)
 - Python wrapper package (`python/syncfleet`) with a `syncfleet` console script
   that forwards to the native executable; published to PyPI
 - `scripts/release.py` to bump `Cargo.toml`, the Python wrapper version and the
@@ -55,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alongside the ciphertext (AES-256-GCM nonce ‖ ciphertext)
 - Environment-variable config overrides were silently ignored due to an
   incorrect prefix/separator configuration
+- Enrollment tokens are now signed with the certificate's Ed25519 key (the key
+  the certificate certifies) instead of the separate node-identity key, so the
+  embedded signature actually verifies against the embedded certificate
+- rustls now builds with a single crypto provider (disabled default
+  `aws-lc-rs`, kept `ring`) so TLS configuration no longer panics with
+  "could not automatically determine the process-level CryptoProvider"
 
 ### Security
 - Passphrase-derived key via HKDF-SHA256; per-secret random 96-bit nonce

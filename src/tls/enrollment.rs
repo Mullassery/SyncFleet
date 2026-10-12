@@ -6,9 +6,8 @@
 //! identity without any out-of-band key exchange beyond the token itself.
 
 use crate::error::{Result, TransportError};
-use crate::identity::NodeIdentity;
 use crate::tls::cert;
-use ed25519_dalek::{Signature, Verifier};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -44,11 +43,11 @@ pub fn random_nonce() -> String {
 /// Issue a token for `dataset` with `permissions`, valid for `ttl_hours`.
 ///
 /// The token is self-contained: it carries the issuer node's certificate and
-/// is signed with the issuer's Ed25519 key, binding the certificate to the
-/// node identity.
+/// is signed with the certificate's Ed25519 key, so any holder of the token
+/// can verify it against the embedded certificate without prior trust.
 pub fn issue(
-    identity: &NodeIdentity,
     node_cert: &cert::CertMaterial,
+    signing_key: &SigningKey,
     dataset: &str,
     permissions: u32,
     ttl_hours: u32,
@@ -56,7 +55,7 @@ pub fn issue(
     let now = chrono::Utc::now();
     let claims = EnrollmentClaims {
         v: TOKEN_VERSION,
-        issuer: identity.node_id.clone(),
+        issuer: node_cert.node_id.clone(),
         cert: hex::encode(&node_cert.der),
         dataset: dataset.to_string(),
         permissions,
@@ -66,7 +65,7 @@ pub fn issue(
     };
 
     let claims_json = serde_json::to_vec(&claims)?;
-    let signature = identity.sign(&claims_json, None)?;
+    let signature = signing_key.sign(&claims_json);
     let token = EnrollmentToken {
         claims,
         sig: hex::encode(signature.to_bytes()),

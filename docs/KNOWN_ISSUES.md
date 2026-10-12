@@ -105,8 +105,8 @@
 | TD-006 | Docs | Generate OpenAPI spec for REST API (future) | Low |
 | TD-007 | Journal | ~~Make local mutation + journal append atomic and auto-allocate per-node sequence numbers~~ (done: `append_local_operation` + `node_local_state`) | Done |
 | TD-008 | Storage | ~~Crash-safe recovery / integrity verification on startup~~ (done: per-connection WAL/foreign_keys/busy_timeout via `SqliteConnectOptions`; `integrity_check_on_startup`) | Done |
-| TD-009 | Replication | Remote-operation application (`apply_remote_operation`) not yet implemented; `append_operation` still takes an explicit sequence | Medium |
-| TD-010 | Storage | Snapshot-based journal reclamation (delete ops even when no peer has acked, by bootstrapping peers from a snapshot) | Medium |
+| TD-009 | Replication | ~~Remote-operation application (`apply_remote_operation`) not yet implemented; `append_operation` still takes an explicit sequence~~ (done: `apply_remote_operation` validates checksum, dedupes, stores, and advances the checkpoint atomically; idempotent on replay) | Done |
+| TD-010 | Storage | Snapshot-based journal reclamation (delete ops even when no peer has acked, by bootstrapping peers from a snapshot) — Phase 7 | Medium |
 
 ---
 

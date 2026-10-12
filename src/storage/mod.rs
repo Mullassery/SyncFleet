@@ -137,6 +137,7 @@ pub async fn record_node_identity(
 
 pub mod operations {
     use super::*;
+    use crate::error::ReplicationError;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
@@ -317,6 +318,112 @@ pub mod operations {
 
         tx.commit().await?;
         Ok(op)
+    }
+
+    /// Outcome of [`apply_remote_operation`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ApplyOutcome {
+        /// The operation was newly applied.
+        Applied,
+        /// The operation had already been applied; the call was a no-op.
+        Duplicate,
+    }
+
+    /// Apply an operation received from a peer.
+    ///
+    /// Validates the payload checksum, then — in a single transaction —
+    /// deduplicates by operation id (via `applied_operations`), stores the
+    /// operation in the journal, records it as applied, and advances the
+    /// checkpoint for the operation's origin node up to `origin_seq`.
+    ///
+    /// Re-applying the same operation id is an idempotent no-op returning
+    /// [`ApplyOutcome::Duplicate`], so at-least-once delivery from a peer
+    /// cannot double-apply an operation.
+    ///
+    /// The dataset must already be registered locally (the journal and
+    /// checkpoints reference `datasets(dataset_id)`), otherwise the foreign
+    /// key constraint fails.
+    pub async fn apply_remote_operation(pool: &SqlitePool, op: &Operation) -> Result<ApplyOutcome> {
+        if !verify_checksum(op) {
+            return Err(SyncFleetError::Replication(
+                ReplicationError::ValidationFailed(format!(
+                    "checksum mismatch for operation {}",
+                    op.id
+                )),
+            ));
+        }
+
+        let mut tx = pool.begin().await?;
+
+        // Dedup first: applied_operations.operation_id is the primary key, so
+        // a zero row count means we have already applied this operation.
+        let marked = sqlx::query(
+            "INSERT OR IGNORE INTO applied_operations (operation_id, applied_at, local_seq) VALUES (?, ?, ?)",
+        )
+        .bind(op.id.to_string())
+        .bind(Utc::now().to_rfc3339())
+        .bind(op.origin_seq as i64)
+        .execute(&mut *tx)
+        .await?;
+
+        if marked.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(ApplyOutcome::Duplicate);
+        }
+
+        let causal_json = serde_json::to_string(&op.causal_metadata)?;
+        // OR IGNORE guards against re-storing a row we already have (for
+        // example an operation this node originated and is now echoed back).
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO operation_journal (id, dataset_id, entity_id, origin_node_id, origin_seq, op_type, schema_version, payload, causal_metadata, created_at, checksum)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(op.id.to_string())
+        .bind(&op.dataset_id)
+        .bind(&op.entity_id)
+        .bind(&op.origin_node_id)
+        .bind(op.origin_seq as i64)
+        .bind(op.op_type as i32)
+        .bind(op.schema_version as i32)
+        .bind(&op.payload)
+        .bind(causal_json)
+        .bind(op.created_at.to_rfc3339())
+        .bind(&op.checksum[..])
+        .execute(&mut *tx)
+        .await?;
+
+        // Advance the checkpoint monotonically: never move it backwards if an
+        // older operation arrives after a newer one.
+        let existing: Option<i64> = sqlx::query_scalar(
+            "SELECT last_applied_seq FROM replication_checkpoints WHERE peer_id = ? AND dataset_id = ?",
+        )
+        .bind(&op.origin_node_id)
+        .bind(&op.dataset_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let last_applied = existing.unwrap_or(0).max(op.origin_seq as i64);
+
+        sqlx::query(
+            r#"
+            INSERT INTO replication_checkpoints (peer_id, dataset_id, last_acked_seq, last_applied_seq, updated_at)
+            VALUES (?, ?, 0, ?, ?)
+            ON CONFLICT(peer_id, dataset_id) DO UPDATE SET
+                last_applied_seq = excluded.last_applied_seq,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&op.origin_node_id)
+        .bind(&op.dataset_id)
+        .bind(last_applied)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(ApplyOutcome::Applied)
     }
 
     /// Current sequence allocation state for a node (0 if it has never written).

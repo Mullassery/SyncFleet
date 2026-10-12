@@ -2,8 +2,10 @@ use crate::config::SyncFleetConfig;
 use crate::error::{Result, SyncFleetError};
 use crate::identity::NodeIdentity;
 use crate::storage::{self, Storage};
+use crate::tls;
 use clap::{Args, Parser, Subcommand};
-use std::path::PathBuf;
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -147,6 +149,16 @@ pub enum PeerAction {
     List,
     /// Pair with a peer (enrollment)
     Pair(PairPeerArgs),
+    /// Issue a signed single-use enrollment token for a dataset
+    Token(TokenArgs),
+    /// Redeem an enrollment token issued by a peer (pin the peer's certificate)
+    Redeem(RedeemArgs),
+    /// Export this node's TLS certificate
+    ExportCert(ExportCertArgs),
+    /// Import and pin a peer's TLS certificate (and optionally authorize it)
+    ImportCert(ImportCertArgs),
+    /// List pinned peer certificates
+    Certs,
     /// Show peer details
     Show { peer_id: String },
     /// Revoke a peer
@@ -155,6 +167,53 @@ pub enum PeerAction {
     Retire { peer_id: String },
     /// Reissue peer certificate
     Reissue { peer_id: String },
+}
+
+#[derive(Args, Debug)]
+pub struct TokenArgs {
+    #[arg(long, help = "Dataset the token grants access to")]
+    pub dataset: String,
+
+    #[arg(
+        long,
+        help = "Permissions bitmask (1=read, 2=write, 3=read+write)",
+        default_value = "3"
+    )]
+    pub permissions: i32,
+
+    #[arg(long, help = "Token validity in hours", default_value = "24")]
+    pub ttl_hours: u32,
+}
+
+#[derive(Args, Debug)]
+pub struct RedeemArgs {
+    #[arg(long, help = "Enrollment token (sf1:...)")]
+    pub token: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ExportCertArgs {
+    #[arg(long, help = "Write to a file instead of stdout")]
+    pub out: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct ImportCertArgs {
+    #[arg(long, help = "PEM certificate file to import")]
+    pub file: PathBuf,
+
+    #[arg(long, help = "Peer node id (default: read from the certificate SAN)")]
+    pub peer_id: Option<String>,
+
+    #[arg(long, help = "Authorize the peer for this dataset after pinning")]
+    pub dataset: Option<String>,
+
+    #[arg(
+        long,
+        help = "Permissions bitmask when authorizing",
+        default_value = "3"
+    )]
+    pub permissions: i32,
 }
 
 #[derive(Args, Debug)]
@@ -322,6 +381,58 @@ fn parse_tables(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// SAN addresses to embed in this node's certificate: loopback plus the
+/// concrete IP from `network.listen_addr` (when it is not a wildcard).
+fn san_addresses(config: &SyncFleetConfig) -> Vec<IpAddr> {
+    let mut addrs = vec![
+        IpAddr::from([127, 0, 0, 1]),
+        IpAddr::from(std::net::Ipv6Addr::LOCALHOST),
+    ];
+    if let Ok(sa) = config.network.listen_addr.parse::<std::net::SocketAddr>() {
+        if !sa.ip().is_unspecified() && !addrs.contains(&sa.ip()) {
+            addrs.push(sa.ip());
+        }
+    }
+    addrs
+}
+
+/// Load this node's certificate material, generating it on first use.
+fn ensure_node_cert(
+    config: &SyncFleetConfig,
+    data_dir: &Path,
+    node_name: &str,
+) -> Result<tls::CertMaterial> {
+    let cert_path = config.tls_cert_path(data_dir);
+    let key_path = config.tls_key_path(data_dir);
+    tls::cert::ensure_material(
+        data_dir,
+        node_name,
+        &san_addresses(config),
+        &cert_path,
+        &key_path,
+    )
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+/// Read the first certificate (DER) from a PEM file.
+fn read_cert_der(path: &Path) -> Result<Vec<u8>> {
+    let data = std::fs::read(path)?;
+    let cert = rustls_pemfile::certs(&mut &data[..])
+        .next()
+        .transpose()
+        .map_err(|e| SyncFleetError::InvalidArgument(format!("invalid certificate: {e}")))?
+        .ok_or_else(|| {
+            SyncFleetError::InvalidArgument(format!("no certificate found in {}", path.display()))
+        })?;
+    Ok(cert.as_ref().to_vec())
+}
+
 async fn cmd_init(config: &SyncFleetConfig, args: InitArgs) -> Result<()> {
     let data_dir = args.data_dir.as_deref().unwrap_or(&config.node.data_dir);
 
@@ -349,12 +460,25 @@ async fn cmd_init(config: &SyncFleetConfig, args: InitArgs) -> Result<()> {
     .await?;
     storage.close().await;
 
+    // Generate the node's self-signed TLS material (mutual-auth transport).
+    let cert_path = config.tls_cert_path(data_dir);
+    let key_path = config.tls_key_path(data_dir);
+    let cert = tls::cert::generate_and_store(
+        &identity,
+        &args.node,
+        &san_addresses(config),
+        &cert_path,
+        &key_path,
+    )?;
+
     println!("Initialized SyncFleet node");
     println!("  Node name:  {}", args.node);
     println!("  Node ID:    {}", identity.node_id);
     println!("  Data dir:   {}", data_dir.display());
     println!("  Ed25519:    {}", hex::encode(&identity.ed25519_public));
     println!("  X25519:     {}", hex::encode(&identity.x25519_public));
+    println!("  TLS cert:   {}", cert_path.display());
+    println!("  Cert fp:    {}", cert.fingerprint);
 
     if passphrase.is_some() {
         println!("  Private keys encrypted with passphrase.");
@@ -577,6 +701,129 @@ async fn cmd_peer(config: &SyncFleetConfig, args: PeerArgs) -> Result<()> {
                 "Enrollment token (share out-of-band, expires {}): {}",
                 token.expires_at, token.token
             );
+            Ok(())
+        }
+        PeerAction::Token(a) => {
+            if storage::datasets::get_dataset(storage.pool(), &a.dataset)
+                .await?
+                .is_none()
+            {
+                storage.close().await;
+                return Err(SyncFleetError::NotFound(format!(
+                    "Dataset '{}' not registered locally; register it before issuing a token.",
+                    a.dataset
+                )));
+            }
+            let cert = ensure_node_cert(config, &config.node.data_dir, &config.node.node_name)?;
+            let signing_key =
+                tls::cert::signing_key_from_pem(&config.tls_key_path(&config.node.data_dir))?;
+            let token = tls::enrollment::issue(
+                &cert,
+                &signing_key,
+                &a.dataset,
+                a.permissions as u32,
+                a.ttl_hours,
+            )?;
+            let expires = chrono::Utc::now() + chrono::Duration::hours(a.ttl_hours as i64);
+            // Record the token so redemption can be enforced single-use on this
+            // node when the redeeming peer connects.
+            storage::enrollment::issue(
+                storage.pool(),
+                &sha256_hex(token.as_bytes()),
+                &cert.node_id,
+                &a.dataset,
+                a.permissions as u32,
+                expires,
+            )
+            .await?;
+            println!("Enrollment token (share out-of-band):");
+            println!("{token}");
+            println!("  Issuer:   {} ({})", config.node.node_name, cert.node_id);
+            println!("  Dataset:  {}", a.dataset);
+            println!("  Perms:    {}", a.permissions);
+            println!("  Expires:  {}", expires.to_rfc3339());
+            println!("  Cert fp:  {}", cert.fingerprint);
+            println!("  Lifetime: {}h", a.ttl_hours);
+            Ok(())
+        }
+        PeerAction::Redeem(a) => {
+            let token = tls::enrollment::parse(&a.token)?;
+            tls::enrollment::verify(&token)?;
+            let issuer = tls::enrollment::issuer_node_id(&token);
+            let dataset = tls::enrollment::dataset(&token);
+            let perms = tls::enrollment::permissions(&token);
+            let cert_der = tls::enrollment::issuer_cert_der(&token)?;
+            let fp = tls::cert::fingerprint(&cert_der);
+            let ca_path = config.ca_cert_path(&config.node.data_dir);
+            tls::store::add_cert(&ca_path, &cert_der)?;
+            storage::peers::pin_certificate(storage.pool(), &issuer, &fp).await?;
+
+            println!("Redeemed enrollment token:");
+            println!("  Issuer:    {issuer}");
+            println!("  Dataset:   {dataset}");
+            println!("  Perms:     {perms}");
+            println!("  Pinned:    {} ({fp})", ca_path.display());
+
+            let own = ensure_node_cert(config, &config.node.data_dir, &config.node.node_name)?;
+            println!(
+                "  Your cert: {} (send it to the issuer so it can authorize you)",
+                own.fingerprint
+            );
+            println!("  Export it with: syncfleet peer export-cert --out mycert.pem");
+            Ok(())
+        }
+        PeerAction::ExportCert(a) => {
+            let cert = ensure_node_cert(config, &config.node.data_dir, &config.node.node_name)?;
+            match a.out {
+                Some(path) => {
+                    std::fs::write(&path, &cert.pem)?;
+                    println!(
+                        "Wrote certificate to {} ({})",
+                        path.display(),
+                        cert.fingerprint
+                    );
+                }
+                None => print!("{}", cert.pem),
+            }
+            Ok(())
+        }
+        PeerAction::ImportCert(a) => {
+            let der = read_cert_der(&a.file)?;
+            let peer_id = match &a.peer_id {
+                Some(id) => id.clone(),
+                None => tls::cert::node_id_from_cert(&der)?,
+            };
+            let fp = tls::cert::fingerprint(&der);
+            let ca_path = config.ca_cert_path(&config.node.data_dir);
+            let added = tls::store::add_cert(&ca_path, &der)?;
+            storage::peers::pin_certificate(storage.pool(), &peer_id, &fp).await?;
+
+            println!("Imported certificate for peer '{peer_id}' ({fp})");
+            println!(
+                "  Trust store: {}{}",
+                ca_path.display(),
+                if added { "" } else { " (already pinned)" }
+            );
+
+            if let Some(dataset) = &a.dataset {
+                storage::peers::authorize_peer(storage.pool(), &peer_id, dataset, a.permissions)
+                    .await?;
+                println!(
+                    "  Authorized '{peer_id}' for dataset '{dataset}' (perms {})",
+                    a.permissions
+                );
+            }
+            Ok(())
+        }
+        PeerAction::Certs => {
+            let certs = storage::peers::list_peer_certificates(storage.pool()).await?;
+            if certs.is_empty() {
+                println!("No pinned peer certificates.");
+            } else {
+                for c in certs {
+                    println!("{}\t{}\t{}", c.peer_id, c.fingerprint, c.pinned_at);
+                }
+            }
             Ok(())
         }
         PeerAction::Show { peer_id } => {

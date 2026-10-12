@@ -322,3 +322,128 @@ fn operation_journal_append_and_dedupe() {
             .unwrap());
     });
 }
+
+fn remote_op(seq: u64, payload: &[u8]) -> storage::operations::Operation {
+    let mut vv = storage::operations::VersionVector::new();
+    vv.increment("node-b");
+    storage::operations::Operation {
+        id: Uuid::now_v7(),
+        dataset_id: "orders".to_string(),
+        entity_id: format!("order-{seq}"),
+        origin_node_id: "node-b".to_string(),
+        origin_seq: seq,
+        op_type: storage::operations::OperationType::Insert,
+        schema_version: 1,
+        payload: payload.to_vec(),
+        causal_metadata: vv,
+        created_at: chrono::Utc::now(),
+        checksum: storage::operations::compute_checksum(payload),
+    }
+}
+
+#[test]
+fn apply_remote_operation_dedupes_and_advances_checkpoint() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders(&storage).await;
+
+        let op = remote_op(1, b"{\"n\":1}");
+
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &op)
+            .await
+            .unwrap();
+        assert_eq!(outcome, storage::operations::ApplyOutcome::Applied);
+
+        // Re-applying the same operation is an idempotent no-op.
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &op)
+            .await
+            .unwrap();
+        assert_eq!(outcome, storage::operations::ApplyOutcome::Duplicate);
+
+        // Exactly one journal row and one applied-operation row.
+        let ops =
+            storage::operations::get_operations_since(storage.pool(), "orders", "node-b", 0, 10)
+                .await
+                .unwrap();
+        assert_eq!(ops.len(), 1);
+        assert!(storage::operations::is_applied(storage.pool(), op.id)
+            .await
+            .unwrap());
+
+        // The origin node's checkpoint advanced to the applied sequence.
+        let checkpoint = storage::checkpoints::get_checkpoint(storage.pool(), "node-b", "orders")
+            .await
+            .unwrap()
+            .expect("checkpoint created");
+        assert_eq!(checkpoint.last_applied_seq, 1);
+        assert_eq!(checkpoint.last_acked_seq, 0);
+    });
+}
+
+#[test]
+fn apply_remote_operation_advances_checkpoint_monotonically() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders(&storage).await;
+
+        let newer = remote_op(2, b"{\"n\":2}");
+        let older = remote_op(1, b"{\"n\":1}");
+
+        storage::operations::apply_remote_operation(storage.pool(), &newer)
+            .await
+            .unwrap();
+        // A late-arriving older operation must not move the checkpoint back.
+        storage::operations::apply_remote_operation(storage.pool(), &older)
+            .await
+            .unwrap();
+
+        let checkpoint = storage::checkpoints::get_checkpoint(storage.pool(), "node-b", "orders")
+            .await
+            .unwrap()
+            .expect("checkpoint created");
+        assert_eq!(checkpoint.last_applied_seq, 2);
+    });
+}
+
+#[test]
+fn apply_remote_operation_rejects_bad_checksum() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders(&storage).await;
+
+        let mut op = remote_op(1, b"{\"n\":1}");
+        op.checksum = [0u8; 32];
+
+        let err = storage::operations::apply_remote_operation(storage.pool(), &op)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            syncfleet::error::SyncFleetError::Replication(_)
+        ));
+
+        // A rejected operation is not recorded as applied.
+        assert!(!storage::operations::is_applied(storage.pool(), op.id)
+            .await
+            .unwrap());
+    });
+}
+
+#[test]
+fn apply_remote_operation_requires_registered_dataset() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+
+        // No dataset registered: the journal foreign key rejects the insert.
+        let op = remote_op(1, b"{\"n\":1}");
+        assert!(
+            storage::operations::apply_remote_operation(storage.pool(), &op)
+                .await
+                .is_err()
+        );
+    });
+}
