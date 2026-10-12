@@ -29,10 +29,11 @@ impl TlsStore {
     pub fn load(cert_path: &Path, key_path: &Path) -> Result<Self> {
         let material = cert::load_cert_pem(cert_path)?;
         let key = cert::load_private_key_pem(key_path)?;
+        let cert_chain = vec![CertificateDer::from(material.der.clone())];
         Ok(Self {
-            material,
+            cert_chain,
             key,
-            cert_chain: vec![CertificateDer::from(material.der.clone())],
+            material,
         })
     }
 }
@@ -41,29 +42,34 @@ const TLS13: &SupportedProtocolVersion = &rustls::version::TLS13;
 
 /// Server configuration: requires a client certificate verified against the
 /// pinned trust store, and restricts to TLS 1.3.
-pub fn server_config(
-    store: &TlsStore,
-    roots: Arc<RootCertStore>,
-) -> Result<ServerConfig> {
-    let verifier = rustls::server::WebPkiClientVerifier::builder(roots)
-        .build()
-        .map_err(|e| TransportError::Tls(e))?;
+pub fn server_config(store: &TlsStore, roots: Arc<RootCertStore>) -> Result<ServerConfig> {
+    use rustls::server::WebPkiClientVerifier;
 
-    Ok(ServerConfig::builder_with_protocol_versions(&[TLS13])
-        .map_err(|e| TransportError::Tls(e))?
+    let verifier = WebPkiClientVerifier::builder(roots)
+        .build()
+        .map_err(|e| TransportError::Certificate(format!("client verifier: {e}")))?;
+
+    let config = ServerConfig::builder_with_protocol_versions(&[TLS13])
         .with_client_cert_verifier(verifier)
         .with_single_cert(store.cert_chain.clone(), store.key.clone_key())
-        .map_err(|e| TransportError::Tls(e))?)
+        .map_err(|e| TransportError::Tls(e))?;
+    Ok(config)
 }
 
 /// Client configuration: presents our own certificate and verifies the
 /// server against the pinned trust store over TLS 1.3.
 pub fn client_config(store: &TlsStore, roots: Arc<RootCertStore>) -> Result<ClientConfig> {
-    Ok(ClientConfig::builder_with_protocol_versions(&[TLS13])
-        .map_err(|e| TransportError::Tls(e))?
-        .with_root_certificates(roots)
+    use rustls::client::WebPkiServerVerifier;
+
+    let verifier = WebPkiServerVerifier::builder(roots)
+        .build()
+        .map_err(|e| TransportError::Certificate(format!("server verifier: {e}")))?;
+
+    let config = ClientConfig::builder_with_protocol_versions(&[TLS13])
+        .with_webpki_verifier(verifier)
         .with_client_auth_cert(store.cert_chain.clone(), store.key.clone_key())
-        .map_err(|e| TransportError::Tls(e))?)
+        .map_err(|e| TransportError::Tls(e))?;
+    Ok(config)
 }
 
 /// `Arc`-wrapped server roots (the common ownership form used by both

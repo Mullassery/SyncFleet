@@ -53,7 +53,7 @@ pub fn node_id_from_cert(der: &[u8]) -> Result<String> {
     let san = san
         .ok_or_else(|| TransportError::Certificate("certificate has no SAN".to_string()))?;
 
-    for name in &san.general_names {
+    for name in &san.value.general_names {
         if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
             if let Some(id) = dns.strip_prefix("node_") {
                 return Ok(id.to_string());
@@ -147,7 +147,10 @@ pub fn load_cert_pem(path: &Path) -> Result<CertMaterial> {
     let der = cert.as_ref().to_vec();
     Ok(CertMaterial {
         der: der.clone(),
-        pem: pem::encode(&pem::Pem::new("CERTIFICATE", cert.as_ref())),
+        pem: pem::encode(&pem::Pem {
+            tag: "CERTIFICATE".to_string(),
+            contents: cert.as_ref().to_vec(),
+        }),
         fingerprint: fingerprint(&der),
         node_id: node_id_from_cert(&der)?,
         subject: subject_name(&der)?,

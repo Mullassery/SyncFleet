@@ -37,7 +37,10 @@ pub fn add_cert(path: &Path, der: &[u8]) -> Result<bool> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let pem = pem::encode(&pem::Pem::new("CERTIFICATE", der));
+    let pem = pem::encode(&pem::Pem {
+        tag: "CERTIFICATE".to_string(),
+        contents: der.to_vec(),
+    });
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -81,7 +84,10 @@ pub fn remove_cert(path: &Path, fp: &str) -> Result<bool> {
     }
     let mut out = String::new();
     for cert in remaining {
-        out.push_str(&pem::encode(&pem::Pem::new("CERTIFICATE", cert.as_ref())));
+        out.push_str(&pem::encode(&pem::Pem {
+            tag: "CERTIFICATE".to_string(),
+            contents: cert.as_ref().to_vec(),
+        }));
         out.push('\n');
     }
     std::fs::write(path, out)?;

@@ -8,7 +8,7 @@
 use crate::error::{Result, TransportError};
 use crate::identity::NodeIdentity;
 use crate::tls::cert;
-use ed25519_dalek::{Signature, Signer, Verifier};
+use ed25519_dalek::{Signature, Verifier};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 

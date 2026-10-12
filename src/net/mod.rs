@@ -5,7 +5,7 @@
 //! certificate's `node_<node_id>` SAN entry and checked against the
 //! `peer_authorizations` table before any message is exchanged.
 
-use crate::error::{Result, TransportError};
+use crate::error::{Result, SyncFleetError, TransportError};
 use crate::tls::cert;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -121,7 +121,9 @@ async fn run_peering(
         .map_err(|_| TransportError::Timeout)??;
 
     let reply = match serde_json::from_slice::<Hello>(&msg) {
-        Ok(hello) if hello.proto == PROTO_VERSION => handle_hello(&pool, &node_name, peer_node_id, &hello).await,
+        Ok(hello) if hello.proto == PROTO_VERSION => {
+            handle_hello(&pool, &node_name, &peer_node_id, &hello).await
+        }
         Ok(_) => Err(SyncFleetError::Transport(TransportError::Protocol(
             "unsupported version".to_string(),
         ))),
@@ -153,16 +155,20 @@ async fn run_peering(
     }
 }
 
-async fn handle_hello(pool: &SqlitePool, self_name: &str, peer_node_id: String, hello: &Hello) -> Result<HelloReply> {
+async fn handle_hello(
+    pool: &SqlitePool,
+    self_name: &str,
+    peer_node_id: &str,
+    hello: &Hello,
+) -> Result<HelloReply> {
     if hello.node_id != peer_node_id {
         return Err(SyncFleetError::Transport(TransportError::AuthenticationFailed(format!(
             "certificate node_id {} does not match hello node_id {}",
             peer_node_id, hello.node_id
-        )));
+        ))));
     }
 
     // Permission required for any dataset: read (bit 1).
-    let peers = crate::storage::peers::list_peers(pool).await?;
     let mut authorized = Vec::new();
     for dataset in &hello.datasets {
         if crate::storage::peers::is_authorized(pool, &peer_node_id, dataset, 1).await? {
@@ -172,12 +178,12 @@ async fn handle_hello(pool: &SqlitePool, self_name: &str, peer_node_id: String, 
     if authorized.is_empty() {
         return Err(SyncFleetError::Transport(TransportError::PeerRejected(format!(
             "{peer_node_id} has no active authorization"
-        )));
+        ))));
     }
 
     Ok(HelloReply {
-        peer_node_id,
-        peer_node_name: hello.node_name.clone(),
+        peer_node_id: peer_node_id.to_string(),
+        peer_node_name: self_name.to_string(),
         ok: true,
         authorized_datasets: authorized,
         error: None,
@@ -197,7 +203,7 @@ fn authenticated_node_id(stream: &ServerTlsStream<TcpStream>) -> Result<String> 
 }
 
 async fn read_message(
-    stream: &mut (dyn tokio::io::AsyncRead + Unpin),
+    stream: &mut (dyn tokio::io::AsyncRead + Unpin + Send),
     max_message_size: usize,
 ) -> Result<Vec<u8>> {
     let mut len = [0u8; 4];
@@ -215,7 +221,7 @@ async fn read_message(
 }
 
 async fn write_message(
-    stream: &mut (dyn tokio::io::AsyncWrite + Unpin),
+    stream: &mut (dyn tokio::io::AsyncWrite + Unpin + Send),
     data: &[u8],
 ) -> Result<()> {
     let len = (data.len() as u32).to_be_bytes();
@@ -250,15 +256,17 @@ pub async fn connect(
     let tls = tokio::time::timeout(timeout, connector.connect(server_name, tcp))
         .await
         .map_err(|_| TransportError::Timeout)?
-        .map_err(|e| TransportError::Tls(e))?;
+        .map_err(TransportError::Io)?;
 
     let certs = tls.get_ref().1.peer_certificates().ok_or(TransportError::MissingPeerCertificate)?;
     let leaf = certs.first().ok_or(TransportError::MissingPeerCertificate)?;
     let server_node_id = cert::node_id_from_cert(leaf.as_ref())?;
     if server_node_id != expected_peer_node_id {
-        return Err(SyncFleetError::Transport(TransportError::AuthenticationFailed(format!(
-            "expected peer {expected_peer_node_id}, server presented {server_node_id}"
-        )));
+        return Err(SyncFleetError::Transport(
+            TransportError::AuthenticationFailed(format!(
+                "expected peer {expected_peer_node_id}, server presented {server_node_id}"
+            )),
+        ));
     }
 
     let mut stream = tls;
@@ -268,9 +276,9 @@ pub async fn connect(
         .map_err(|_| TransportError::Timeout)??;
     let reply: HelloReply = serde_json::from_slice(&reply)?;
     if !reply.ok {
-        return Err(TransportError::PeerRejected(
+        return Err(SyncFleetError::Transport(TransportError::PeerRejected(
             reply.error.unwrap_or_else(|| "peer rejected connection".to_string()),
-        ));
+        )));
     }
     Ok(reply)
 }
