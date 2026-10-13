@@ -221,6 +221,17 @@ See [ROADMAP.md](docs/ROADMAP.md) for details.
 - [Architecture Decisions](docs/DECISIONS.md)
 - [Known Issues](docs/KNOWN_ISSUES.md)
 
+## Related projects
+
+Part of the Mullassery open-source family:
+
+- [PyTerrainMap](https://github.com/Mullassery/PyTerrainMap) — multi-robot terrain intelligence and mapping
+- [PyRoboSimulator](https://github.com/Mullassery/PyRoboSimulator) — simulation environment for autonomous systems
+- [PyRoboFrames](https://github.com/Mullassery/PyRoboFrames) — high-performance robotics dataloader
+- [TinyBridge](https://github.com/Mullassery/tinybridge) — macOS-native Linux VM runtime for local edge testing
+- [PyDeepMesh](https://github.com/Mullassery/PyDeepMesh) — dependency-graph and vulnerability intelligence
+- [Browse all projects →](https://github.com/Mullassery?tab=repositories)
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
