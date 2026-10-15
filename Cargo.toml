@@ -2,7 +2,7 @@
 name = "syncfleet"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.89"
 description = "A secure, local-first, peer-to-peer edge database synchronization engine"
 license = "MIT"
 repository = "https://github.com/Mullassery/SyncFleet"

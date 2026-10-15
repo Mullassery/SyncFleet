@@ -65,7 +65,7 @@ jobs:
       - name: Build wheel
         run: |
           python -m pip install --upgrade build
-          python -m build --wheel -C--plat-name=${{ matrix.plat }}
+          python -m build --wheel -C--build-option=--plat-name=${{ matrix.plat }}
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.plat }}
