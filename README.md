@@ -75,7 +75,7 @@ cargo build --release
 export PATH="$PWD/target/release:$PATH"
 ```
 
-Requires a recent stable Rust toolchain (MSRV 1.75).
+Requires a recent stable Rust toolchain (MSRV 1.89).
 
 ### 2. Initialize a node
 
