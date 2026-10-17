@@ -2,7 +2,6 @@ use crate::error::{IdentityError, Result};
 use aes_gcm::aead::{generic_array::GenericArray, Aead};
 use aes_gcm::{aead::OsRng, Aes256Gcm, KeyInit};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use hkdf::Hkdf;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,6 +11,15 @@ use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519StaticSecret
 
 const KEY_FILE: &str = "node_identity.bin";
 const PASSPHRASE_SALT: &[u8] = b"syncfleet-passphrase-salt-v1";
+
+/// Iteration count for the PBKDF2-HMAC-SHA256 passphrase KDF.
+///
+/// Matches OWASP's 2023 recommendation for PBKDF2-HMAC-SHA256 (600,000
+/// iterations). Derivation only happens on identity create/unlock, so the
+/// cost is paid rarely; the point is to make offline brute-forcing of a
+/// passphrase expensive, which a plain (work-factor-free) KDF like HKDF
+/// does not.
+const PASSPHRASE_KDF_ITERATIONS: u32 = 600_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeIdentity {
@@ -65,11 +73,26 @@ impl NodeIdentity {
         hex::encode(&hash[..16])
     }
 
+    /// Derive the AES-256-GCM key that protects the on-disk private keys
+    /// from a passphrase.
+    ///
+    /// This is deliberately a *password* KDF (PBKDF2-HMAC-SHA256 with a high
+    /// iteration count), not a plain keyed hash like HKDF: HKDF has no work
+    /// factor, so an attacker who steals `node_identity.bin` can test
+    /// passphrase guesses at hashing speed. PBKDF2 adds the tunable cost that
+    /// makes offline brute force orders of magnitude slower.
+    ///
+    /// NOTE: this changes the derived key versus the previous HKDF scheme, so
+    /// identity files written by older versions (passphrase-protected ones)
+    /// must be regenerated. The crate is pre-1.0.
     fn derive_key(passphrase: &str) -> Result<[u8; 32]> {
-        let hkdf = Hkdf::<Sha256>::new(Some(PASSPHRASE_SALT), passphrase.as_bytes());
         let mut key = [0u8; 32];
-        hkdf.expand(b"syncfleet-node-key", &mut key)
-            .map_err(|e| IdentityError::KeyGeneration(e.to_string()))?;
+        pbkdf2::pbkdf2_hmac::<Sha256>(
+            passphrase.as_bytes(),
+            PASSPHRASE_SALT,
+            PASSPHRASE_KDF_ITERATIONS,
+            &mut key,
+        );
         Ok(key)
     }
 
@@ -235,5 +258,66 @@ impl EnrollmentToken {
 
     pub fn mark_used(&mut self) {
         self.used = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passphrase_kdf_is_deterministic_and_passphrase_sensitive() {
+        let a = NodeIdentity::derive_key("correct horse battery staple").unwrap();
+        let b = NodeIdentity::derive_key("correct horse battery staple").unwrap();
+        assert_eq!(a, b, "same passphrase must derive the same key");
+
+        let c = NodeIdentity::derive_key("a different passphrase").unwrap();
+        assert_ne!(a, c, "different passphrases must derive different keys");
+    }
+
+    #[test]
+    fn passphrase_kdf_has_a_real_work_factor() {
+        // Guards against someone silently swapping this back to a
+        // work-factor-free KDF (e.g. HKDF), which was the original defect.
+        assert!(
+            PASSPHRASE_KDF_ITERATIONS >= 600_000,
+            "PBKDF2 iteration count must stay at/above the OWASP 2023 guidance"
+        );
+    }
+
+    #[test]
+    fn passphrase_kdf_matches_pbkdf2_hmac_sha256_known_answer() {
+        // RFC 7914 §11 PBKDF2-HMAC-SHA256 vector (P="passwd", S="salt",
+        // c=1, dkLen=64). Pins the primitive actually in use to a
+        // known-answer rather than merely checking it round-trips.
+        let mut out = [0u8; 64];
+        pbkdf2::pbkdf2_hmac::<Sha256>(b"passwd", b"salt", 1, &mut out);
+        assert_eq!(
+            out,
+            [
+                0x55, 0xac, 0x04, 0x6e, 0x56, 0xe3, 0x08, 0x9f, 0xec, 0x16, 0x91, 0xc2, 0x25,
+                0x44, 0xb6, 0x05, 0xf9, 0x41, 0x85, 0x21, 0x6d, 0xde, 0x04, 0x65, 0xe6, 0x8b,
+                0x9d, 0x57, 0xc2, 0x0d, 0xac, 0xbc, 0x49, 0xca, 0x9c, 0xcc, 0xf1, 0x79, 0xb6,
+                0x45, 0x99, 0x16, 0x64, 0xb3, 0x9d, 0x77, 0xef, 0x31, 0x7c, 0x71, 0xb8, 0x45,
+                0xb1, 0xe3, 0x0b, 0xd5, 0x09, 0x11, 0x20, 0x41, 0xd3, 0xa1, 0x97, 0x83,
+            ]
+        );
+    }
+
+    #[test]
+    fn passphrase_protected_identity_round_trips_and_rejects_wrong_passphrase() {
+        let identity = NodeIdentity::generate(Some("s3cret pass")).unwrap();
+
+        let signing_key = identity.ed25519_signing_key(Some("s3cret pass")).unwrap();
+        assert_eq!(
+            signing_key.verifying_key().to_bytes().to_vec(),
+            identity.ed25519_public,
+            "recovered signing key must match the stored public key"
+        );
+
+        assert!(
+            identity.ed25519_signing_key(Some("wrong passphrase")).is_err(),
+            "a wrong passphrase must fail to decrypt"
+        );
     }
 }
