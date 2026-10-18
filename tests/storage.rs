@@ -627,3 +627,39 @@ fn local_wins_policy_rejects_remote_without_journaling_it() {
         assert_eq!(stats_after.applied_operations, 1);
     });
 }
+
+#[test]
+fn schema_version_mismatch_is_rejected_and_recorded() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders(&storage).await;
+
+        let payload = b"{\"n\":2}".to_vec();
+        let mut causal = storage::operations::VersionVector::new();
+        causal.increment("node-b");
+        let remote = storage::operations::Operation {
+            id: Uuid::new_v4(),
+            dataset_id: "orders".to_string(),
+            entity_id: "order-1".to_string(),
+            origin_node_id: "node-b".to_string(),
+            origin_seq: 1,
+            op_type: storage::operations::OperationType::Update,
+            schema_version: 2,
+            payload: payload.clone(),
+            causal_metadata: causal,
+            created_at: chrono::Utc::now(),
+            checksum: storage::operations::compute_checksum(&payload),
+        };
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &remote)
+            .await
+            .unwrap();
+        assert_eq!(outcome, storage::operations::ApplyOutcome::Rejected);
+
+        let conflicts = storage::conflicts::list_conflicts(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(conflicts[0].conflict_type, "schema_version_mismatch");
+        assert!(conflicts[0].resolved_at.is_none());
+    });
+}

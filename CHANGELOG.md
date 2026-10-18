@@ -5,6 +5,15 @@ All notable changes to SyncFleet will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-19
+
+### Added
+- Schema-version guard: a remote operation whose `schema_version` differs from
+  the local dataset is rejected, recorded as a `schema_version_mismatch`
+  conflict, and its checkpoint is advanced so it is not redelivered. This is
+  detection, not migration; the operator updates the dataset or republishes.
+- Storage test covers the mismatch path.
+
 ## [0.5.0] - 2026-10-19
 
 ### Added

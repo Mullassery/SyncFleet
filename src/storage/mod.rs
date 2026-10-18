@@ -337,8 +337,8 @@ pub mod operations {
         Applied,
         /// The operation had already been applied; the call was a no-op.
         Duplicate,
-        /// The operation lost a policy conflict and was not journaled; the
-        /// checkpoint still advances so it is not redelivered.
+        /// The operation was not journaled (policy conflict or schema-version
+        /// mismatch); the checkpoint still advances so it is not redelivered.
         Rejected,
     }
 
@@ -382,6 +382,48 @@ pub mod operations {
         if marked.rows_affected() == 0 {
             tx.rollback().await?;
             return Ok(ApplyOutcome::Duplicate);
+        }
+
+        // Reject operations built against a different local dataset schema.
+        // This is detection, not migration: the operator must update the
+        // dataset schema_version (or publish a compatible op) before retrying.
+        let local_schema: Option<i64> =
+            sqlx::query_scalar("SELECT schema_version FROM datasets WHERE dataset_id = ?")
+                .bind(&op.dataset_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if let Some(local_schema) = local_schema {
+            if local_schema as u32 != op.schema_version {
+                sqlx::query(
+                    "INSERT INTO conflicts
+                     (id, operation_id, conflict_type, local_operation_id,
+                      remote_operation_id, detected_at, resolved_at, resolution)
+                     VALUES (?, ?, ?, NULL, ?, ?, NULL, NULL)",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind(op.id.to_string())
+                .bind("schema_version_mismatch")
+                .bind(op.id.to_string())
+                .bind(Utc::now().to_rfc3339())
+                .execute(&mut *tx)
+                .await?;
+                let now = Utc::now().to_rfc3339();
+                sqlx::query(
+                    "INSERT INTO replication_checkpoints (peer_id, dataset_id, last_acked_seq, last_applied_seq, updated_at)
+                     VALUES (?, ?, 0, ?, ?)
+                     ON CONFLICT(peer_id, dataset_id) DO UPDATE SET
+                         last_applied_seq = excluded.last_applied_seq,
+                         updated_at = excluded.updated_at",
+                )
+                .bind(&op.origin_node_id)
+                .bind(&op.dataset_id)
+                .bind(op.origin_seq as i64)
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+                tx.commit().await?;
+                return Ok(ApplyOutcome::Rejected);
+            }
         }
 
         // Detect concurrent writes to the same entity from a different origin.

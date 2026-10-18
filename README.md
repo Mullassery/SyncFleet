@@ -182,9 +182,12 @@ syncfleet doctor --full
 > `conflict_policy = "remote_wins"`, the conflict record is auto-resolved in
 > favour of the applied remote operation. `local_wins` rejects the remote
 > operation without journaling it (the checkpoint still advances), and
-> `last_write_wins` compares operation timestamps. Other policies record an
-> open conflict for manual `syncfleet conflicts list|show|resolve`. mDNS
-> interface binding is also still open.
+> `last_write_wins` compares operation timestamps. An operation whose
+> `schema_version` differs from the local dataset is rejected and recorded as
+> a `schema_version_mismatch` conflict; the operator must update the dataset or
+> publish a compatible operation. Other policies record an open conflict for
+> manual `syncfleet conflicts list|show|resolve`. mDNS interface binding is
+> also still open.
 
 ---
 

@@ -138,7 +138,8 @@
 - [x] Conflict metadata recording
 - [x] Manual admin resolution workflow
 - [x] `remote_wins`, `local_wins`, and `last_write_wins` policies
-- [ ] CRDT / field-level merge semantics
+- [x] Schema-version mismatch detection/rejection
+- [ ] Schema migration tooling and CRDT / field-level merge semantics
 
 ## Phase 7: Snapshots, Backup, and Recovery
 

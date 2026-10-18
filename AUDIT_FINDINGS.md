@@ -55,9 +55,10 @@ Implemented concurrent-write conflict detection in this pass:
   when a remote op is concurrent with the latest same-entity op from another
   origin. `remote_wins` policy auto-resolves that record; other policies remain
   manual via the CLI.
-- Storage tests cover detection, `remote_wins` auto-resolution, and
-  `local_wins` rejection; full suite 57 passed; fmt/clippy clean.
-- Version `0.5.0`.
+- Storage tests cover detection, `remote_wins` auto-resolution, `local_wins`
+  rejection, and schema-version mismatch; full suite 58 passed; fmt/clippy
+  clean.
+- Version `0.6.0`.
 
-Still open: CRDT/field-level merge semantics, schema evolution, mDNS interface
-binding, and relay/NAT traversal.
+Still open: schema migration tooling, CRDT/field-level merge semantics, mDNS
+interface binding, and relay/NAT traversal.
