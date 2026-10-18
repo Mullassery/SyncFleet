@@ -52,12 +52,13 @@ def vendor(built: Path) -> Path:
 
 def build_wheel(plat_name: str | None, sdist: bool) -> None:
     out = ROOT / "dist"
-    cmd = [sys.executable, "-m", "build", "--wheel", "--outdir", str(out)]
+    env = os.environ.copy()
     if plat_name:
-        cmd += ["--config-setting", f"--build-option=--plat-name={plat_name}"]
+        env["SYNCFLEET_WHEEL_PLAT"] = plat_name
+    cmd = [sys.executable, "-m", "build", "--wheel", "--outdir", str(out)]
     if sdist:
         cmd = [sys.executable, "-m", "build", "--outdir", str(out)]
-    subprocess.run(cmd, cwd=ROOT, check=True)
+    subprocess.run(cmd, cwd=ROOT, check=True, env=env)
 
 
 def main() -> int:
