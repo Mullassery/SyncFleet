@@ -130,7 +130,8 @@
 ### Milestone 6.1 - Single-Writer Enforcement
 - [ ] Writer designation per dataset
 - [ ] Unauthorized write detection
-- [x] Concurrent-write detection (version vectors) and conflict quarantine
+- [x] Concurrent-write detection (version vectors) and conflict recording
+- [ ] Conflict quarantine (the remote op is currently applied, not withheld)
 
 ### Milestone 6.2 - Conflict Inspection
 - [x] `syncfleet conflicts list|show|resolve` commands
