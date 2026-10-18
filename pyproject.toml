@@ -48,3 +48,7 @@ syncfleet = ["bin/*", "py.typed"]
 
 [tool.setuptools.dynamic]
 version = { attr = "syncfleet.__version__" }
+
+[project.optional-dependencies]
+# Embedded architecture/knowledge-graph engine behind tools/codeatlas.
+architecture = ["codeatlas-rs>=0.3.0"]
