@@ -2,7 +2,7 @@
 /target
 
 # Graphify analysis output
-graphify-out/
+codeatlas-out/
 
 # Python build artifacts
 __pycache__/

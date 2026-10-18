@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "outputs": {
+    "md": [
+      "overview.md",
+      "python.4.md",
+      "src.6.md",
+      "tools.8.md"
+    ],
+    "html": [
+      "overview.html",
+      "python.4.html",
+      "src.6.html",
+      "tools.8.html"
+    ]
+  }
+}
