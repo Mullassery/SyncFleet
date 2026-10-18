@@ -5,6 +5,16 @@ All notable changes to SyncFleet will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-19
+
+### Added
+- `conflict_policy = "remote_wins"` (or `"remote"`) auto-resolves the conflict
+  record in favour of the applied remote operation (`resolved_at` set,
+  `resolution = "remote"`). Other policies still record an open conflict for
+  manual resolution. `local_wins` is intentionally not implemented because the
+  engine does not materialize local row state.
+- Storage test covers the auto-resolution path.
+
 ## [0.3.0] - 2026-10-19
 
 ### Added

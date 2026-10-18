@@ -501,3 +501,62 @@ fn concurrent_remote_write_records_a_conflict() {
         assert!(conflicts[0].resolved_at.is_none());
     });
 }
+
+#[test]
+fn remote_wins_policy_auto_resolves_concurrent_conflict() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        let dataset = storage::datasets::Dataset {
+            dataset_id: "orders".to_string(),
+            schema_version: 1,
+            conflict_policy: "remote_wins".to_string(),
+            table_allowlist: vec!["orders".to_string()],
+            created_at: chrono::Utc::now(),
+        };
+        storage::datasets::register_dataset(storage.pool(), &dataset)
+            .await
+            .unwrap();
+
+        storage::operations::append_local_operation(
+            storage.pool(),
+            storage::operations::LocalOperation {
+                dataset_id: "orders".to_string(),
+                entity_id: "order-1".to_string(),
+                op_type: storage::operations::OperationType::Update,
+                schema_version: 1,
+                payload: b"{\"n\":1}".to_vec(),
+                origin_node_id: "node-a".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let payload = b"{\"n\":2}".to_vec();
+        let mut causal = storage::operations::VersionVector::new();
+        causal.increment("node-b");
+        let remote = storage::operations::Operation {
+            id: Uuid::new_v4(),
+            dataset_id: "orders".to_string(),
+            entity_id: "order-1".to_string(),
+            origin_node_id: "node-b".to_string(),
+            origin_seq: 1,
+            op_type: storage::operations::OperationType::Update,
+            schema_version: 1,
+            payload: payload.clone(),
+            causal_metadata: causal,
+            created_at: chrono::Utc::now(),
+            checksum: storage::operations::compute_checksum(&payload),
+        };
+        storage::operations::apply_remote_operation(storage.pool(), &remote)
+            .await
+            .unwrap();
+
+        let conflicts = storage::conflicts::list_conflicts(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].resolution.as_deref(), Some("remote"));
+        assert!(conflicts[0].resolved_at.is_some());
+    });
+}

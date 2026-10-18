@@ -178,9 +178,12 @@ syncfleet doctor --full
 > needed for one-off syncs.
 >
 > **Conflict handling:** concurrent writes from different origins are detected
-> and recorded in the `conflicts` table during apply. Resolve them manually with
-> `syncfleet conflicts list|show|resolve`; automatic policy-based resolution is
-> not implemented. mDNS interface binding is also still open.
+> and recorded in the `conflicts` table during apply. With a dataset
+> `conflict_policy = "remote_wins"`, the conflict record is auto-resolved in
+> favour of the applied remote operation; other policies require manual
+> `syncfleet conflicts list|show|resolve`. `local_wins` is not implemented
+> because the engine does not materialize local row state. mDNS interface
+> binding is also still open.
 
 ---
 

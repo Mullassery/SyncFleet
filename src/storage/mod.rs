@@ -400,11 +400,23 @@ pub mod operations {
             let existing_causal: String = row.try_get("causal_metadata")?;
             let existing_vector: VersionVector = serde_json::from_str(&existing_causal)?;
             if op.causal_metadata.is_concurrent(&existing_vector) {
+                let policy: Option<String> =
+                    sqlx::query_scalar("SELECT conflict_policy FROM datasets WHERE dataset_id = ?")
+                        .bind(&op.dataset_id)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                // Only remote_wins is auto-resolved: the remote operation is
+                // the one this function applies. local_wins would require
+                // withholding the remote op and replaying local state, which
+                // this engine does not materialize; leave those conflicts open.
+                let auto_remote = matches!(policy.as_deref(), Some("remote_wins") | Some("remote"));
+                let resolved_at = auto_remote.then(|| Utc::now().to_rfc3339());
+                let resolution = auto_remote.then_some("remote");
                 sqlx::query(
                     "INSERT INTO conflicts
                      (id, operation_id, conflict_type, local_operation_id,
                       remote_operation_id, detected_at, resolved_at, resolution)
-                     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(Uuid::new_v4().to_string())
                 .bind(op.id.to_string())
@@ -412,6 +424,8 @@ pub mod operations {
                 .bind(existing_id)
                 .bind(op.id.to_string())
                 .bind(Utc::now().to_rfc3339())
+                .bind(resolved_at)
+                .bind(resolution)
                 .execute(&mut *tx)
                 .await?;
             }
