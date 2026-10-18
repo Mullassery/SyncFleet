@@ -1,5 +1,6 @@
 # SyncFleet
 
+[![PyPI](https://img.shields.io/pypi/v/syncfleet.svg)](https://pypi.org/project/syncfleet/)
 [![Graphify](https://img.shields.io/badge/Graphify-knowledge%20graph-blue)](https://github.com/Graphify-Labs/graphify)
 
 A secure, local-first, peer-to-peer edge database synchronization engine.
