@@ -693,6 +693,29 @@ pub mod checkpoints {
         }
     }
 
+    /// All checkpoints for a dataset, one per origin node.
+    pub async fn list_for_dataset(pool: &SqlitePool, dataset_id: &str) -> Result<Vec<Checkpoint>> {
+        let rows = sqlx::query(
+            "SELECT peer_id, dataset_id, last_acked_seq, last_applied_seq, updated_at FROM replication_checkpoints WHERE dataset_id = ? ORDER BY peer_id",
+        )
+        .bind(dataset_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(Checkpoint {
+                peer_id: row.try_get("peer_id")?,
+                dataset_id: row.try_get("dataset_id")?,
+                last_acked_seq: row.try_get::<i64, _>("last_acked_seq")? as u64,
+                last_applied_seq: row.try_get::<i64, _>("last_applied_seq")? as u64,
+                updated_at: DateTime::parse_from_rfc3339(&row.try_get::<String, _>("updated_at")?)?
+                    .with_timezone(&Utc),
+            });
+        }
+        Ok(out)
+    }
+
     pub async fn update_checkpoint(pool: &SqlitePool, checkpoint: &Checkpoint) -> Result<()> {
         sqlx::query(
             r#"

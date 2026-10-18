@@ -1,11 +1,16 @@
-use crate::config::SyncFleetConfig;
+use crate::config::{PeerConfig, SyncFleetConfig};
 use crate::error::{Result, SyncFleetError};
 use crate::identity::NodeIdentity;
+use crate::replication;
 use crate::storage::{self, Storage};
 use crate::tls;
 use clap::{Args, Parser, Subcommand};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::net::TcpListener;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -113,6 +118,27 @@ pub enum DatasetAction {
     Show { dataset_id: String },
     /// Remove a dataset (local only)
     Remove { dataset_id: String },
+    /// Record a local operation in the journal (for replication/testing)
+    Apply(ApplyDatasetArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ApplyDatasetArgs {
+    #[arg(long, help = "Dataset to write into")]
+    pub dataset: String,
+
+    #[arg(long, help = "Entity id (row key)")]
+    pub entity: String,
+
+    #[arg(
+        long,
+        default_value = "insert",
+        help = "Operation type: insert|update|delete"
+    )]
+    pub op: String,
+
+    #[arg(long, default_value = "{}", help = "JSON object payload")]
+    pub data: String,
 }
 
 #[derive(Args, Debug)]
@@ -241,8 +267,15 @@ pub struct SyncArgs {
 pub enum SyncAction {
     /// Show sync status for all datasets
     Status { dataset_id: Option<String> },
-    /// Force synchronization now
-    Now { dataset_id: Option<String> },
+    /// Synchronize with a peer now (Phase 4 incremental replication)
+    Now {
+        #[arg(long, help = "Restrict to a single dataset")]
+        dataset_id: Option<String>,
+        #[arg(long, help = "Peer node id to synchronize with")]
+        peer: Option<String>,
+        #[arg(long, help = "Peer address host:port (overrides config [[peers]])")]
+        addr: Option<String>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -431,6 +464,28 @@ fn read_cert_der(path: &Path) -> Result<Vec<u8>> {
             SyncFleetError::InvalidArgument(format!("no certificate found in {}", path.display()))
         })?;
     Ok(cert.as_ref().to_vec())
+}
+
+/// Build the node's TLS server acceptor (certificate + pinned trust store).
+fn build_server_acceptor(config: &SyncFleetConfig, data_dir: &Path) -> Result<TlsAcceptor> {
+    let store = tls::TlsStore::load(
+        &config.tls_cert_path(data_dir),
+        &config.tls_key_path(data_dir),
+    )?;
+    let roots = Arc::new(tls::store::load_roots(&config.ca_cert_path(data_dir))?);
+    let server_cfg = tls::server_config(&store, roots)?;
+    Ok(TlsAcceptor::from(Arc::new(server_cfg)))
+}
+
+/// Build the node's TLS client connector (certificate + pinned trust store).
+fn build_client_connector(config: &SyncFleetConfig, data_dir: &Path) -> Result<TlsConnector> {
+    let store = tls::TlsStore::load(
+        &config.tls_cert_path(data_dir),
+        &config.tls_key_path(data_dir),
+    )?;
+    let roots = Arc::new(tls::store::load_roots(&config.ca_cert_path(data_dir))?);
+    let client_cfg = tls::client_config(&store, roots)?;
+    Ok(TlsConnector::from(Arc::new(client_cfg)))
 }
 
 async fn cmd_init(config: &SyncFleetConfig, args: InitArgs) -> Result<()> {
@@ -645,6 +700,45 @@ async fn cmd_dataset(config: &SyncFleetConfig, args: DatasetArgs) -> Result<()> 
                     dataset_id
                 )));
             }
+        }
+        DatasetAction::Apply(args) => {
+            let dataset =
+                match storage::datasets::get_dataset(storage.pool(), &args.dataset).await? {
+                    Some(ds) => ds,
+                    None => {
+                        storage.close().await;
+                        return Err(SyncFleetError::NotFound(format!(
+                            "Dataset '{}' not registered; register it before writing.",
+                            args.dataset
+                        )));
+                    }
+                };
+            let op_type = replication::parse_op_type(&args.op)?;
+            let value: serde_json::Value = serde_json::from_str(&args.data).map_err(|e| {
+                SyncFleetError::InvalidArgument(format!("--data is not valid JSON: {e}"))
+            })?;
+            if !value.is_object() {
+                storage.close().await;
+                return Err(SyncFleetError::InvalidArgument(
+                    "--data must be a JSON object".to_string(),
+                ));
+            }
+            let identity = NodeIdentity::load(&config.node.data_dir)?;
+            let op = replication::local_write(
+                storage.pool(),
+                &identity.node_id,
+                &args.dataset,
+                &args.entity,
+                op_type,
+                dataset.schema_version,
+                replication::encode_payload(&value),
+            )
+            .await?;
+            println!(
+                "Applied {} on '{}' entity '{}' (seq {}, op {}).",
+                args.op, args.dataset, args.entity, op.origin_seq, op.id
+            );
+            Ok(())
         }
     };
     storage.close().await;
@@ -906,28 +1000,107 @@ async fn cmd_sync(config: &SyncFleetConfig, args: SyncArgs) -> Result<()> {
                 println!("No matching datasets.");
             }
             for ds in selected {
-                let checkpoint =
-                    storage::checkpoints::get_checkpoint(storage.pool(), "self", &ds.dataset_id)
-                        .await?;
-                match checkpoint {
-                    Some(cp) => println!(
-                        "{}\tlast_acked={}\tlast_applied={}\tupdated={}",
-                        ds.dataset_id, cp.last_acked_seq, cp.last_applied_seq, cp.updated_at
-                    ),
-                    None => println!("{}\tno checkpoint yet", ds.dataset_id),
+                let checkpoints =
+                    storage::checkpoints::list_for_dataset(storage.pool(), &ds.dataset_id).await?;
+                if checkpoints.is_empty() {
+                    println!("{}\tno checkpoint yet", ds.dataset_id);
+                }
+                for cp in checkpoints {
+                    println!(
+                        "{}\torigin={}\tlast_acked={}\tlast_applied={}\tupdated={}",
+                        ds.dataset_id,
+                        cp.peer_id,
+                        cp.last_acked_seq,
+                        cp.last_applied_seq,
+                        cp.updated_at
+                    );
                 }
             }
             Ok(())
         }
-        SyncAction::Now { dataset_id: _ } => {
-            // The replication engine (Phase 3) drives sync over the network. Until
-            // it is wired in, operate as a single node: report local state.
-            let datasets = storage::datasets::list_datasets(storage.pool()).await?;
+        SyncAction::Now {
+            dataset_id,
+            peer,
+            addr,
+        } => {
+            let identity = NodeIdentity::load(&config.node.data_dir)?;
+
+            let peer_id = peer.ok_or_else(|| {
+                SyncFleetError::InvalidArgument(
+                    "--peer <node_id> is required for 'sync now' unless a [[peers]] entry matches"
+                        .to_string(),
+                )
+            })?;
+
+            // Resolve the address: explicit --addr wins, else the config [[peers]].
+            let address = match addr {
+                Some(a) => a,
+                None => config
+                    .peers
+                    .iter()
+                    .find(|p| p.node_id == peer_id)
+                    .map(|p| p.address.clone())
+                    .ok_or_else(|| {
+                        SyncFleetError::NotFound(format!(
+                            "no address for peer '{peer_id}': pass --addr or add a [[peers]] entry"
+                        ))
+                    })?,
+            };
+
+            // Datasets to attempt: the requested one, or every locally known one.
+            let local = storage::datasets::list_datasets(storage.pool()).await?;
+            let datasets: Vec<String> = match &dataset_id {
+                Some(id) => {
+                    if !local.iter().any(|d| &d.dataset_id == id) {
+                        storage.close().await;
+                        return Err(SyncFleetError::NotFound(format!(
+                            "Dataset '{id}' not registered locally."
+                        )));
+                    }
+                    vec![id.clone()]
+                }
+                None => local.iter().map(|d| d.dataset_id.clone()).collect(),
+            };
+            if datasets.is_empty() {
+                println!("No datasets to synchronize.");
+                storage.close().await;
+                return Ok(());
+            }
+
+            let (sockaddr, server_name) = crate::net::resolve_peer_addr(&address)?;
+            let connector = build_client_connector(config, &config.node.data_dir)?;
+            let hello = crate::net::Hello {
+                proto: crate::net::PROTO_VERSION,
+                node_id: identity.node_id.clone(),
+                node_name: config.node.node_name.clone(),
+                datasets: datasets.clone(),
+            };
+
+            let (reply, report) = crate::net::connect_and_sync(
+                sockaddr,
+                server_name,
+                &connector,
+                &peer_id,
+                hello,
+                storage.pool(),
+                config.network.max_message_size,
+                config.replication.max_ops_per_response,
+                Duration::from_secs(config.network.connect_timeout_sec),
+                Duration::from_secs(config.network.idle_timeout_sec),
+            )
+            .await?;
+
+            println!("Synchronized with {} ({})", peer_id, reply.peer_node_name);
             println!(
-                "Local-only mode: {} dataset(s) registered; no peers connected.",
-                datasets.len()
+                "  datasets={} pulled={} pushed={}",
+                report.datasets, report.pulled, report.pushed
             );
-            println!("Network replication is not implemented yet (see docs/ROADMAP.md).");
+            if report.datasets < datasets.len() {
+                println!(
+                    "  note: {} requested dataset(s) not authorized by the peer",
+                    datasets.len() - report.datasets
+                );
+            }
             Ok(())
         }
     };
@@ -1071,20 +1244,209 @@ async fn cmd_journal(config: &SyncFleetConfig, args: JournalArgs) -> Result<()> 
 
 async fn cmd_daemon(config: &SyncFleetConfig, args: DaemonArgs) -> Result<()> {
     match args.action {
-        DaemonAction::Start { background: _ } => {
-            // Network serving requires TLS material; surface a clear error.
-            config.validate_for_network()?;
-            Err(SyncFleetError::Internal(
-                "Daemon networking is not implemented yet (see docs/ROADMAP.md).".to_string(),
-            ))
+        DaemonAction::Start { background } => {
+            let data_dir = &config.node.data_dir;
+            if !NodeIdentity::exists(data_dir) {
+                return Err(SyncFleetError::NotFound(
+                    "Node not initialized. Run 'syncfleet init' first.".to_string(),
+                ));
+            }
+            let identity = NodeIdentity::load(data_dir)?;
+
+            // Ensure this node's TLS material exists, and that at least one peer
+            // certificate is pinned (otherwise no client can complete mTLS).
+            ensure_node_cert(config, data_dir, &config.node.node_name)?;
+            let ca_path = config.ca_cert_path(data_dir);
+            if !ca_path.exists() {
+                return Err(SyncFleetError::NotFound(format!(
+                    "No pinned peer certificates at {}. Enroll a peer first \
+                     ('peer redeem' or 'peer import-cert').",
+                    ca_path.display()
+                )));
+            }
+
+            if background {
+                println!("Note: --background is not supported yet; running in the foreground.");
+            }
+
+            let acceptor = build_server_acceptor(config, data_dir)?;
+            let listener = TcpListener::bind(&config.network.listen_addr).await?;
+            let local_addr = listener.local_addr()?;
+            let storage = open_storage(config).await?;
+
+            let handle = crate::net::spawn_server_with_options(
+                listener,
+                acceptor,
+                storage.pool().clone(),
+                config.node.node_name.clone(),
+                crate::net::ServerOptions {
+                    max_message_size: config.network.max_message_size,
+                    idle_timeout: Duration::from_secs(config.network.idle_timeout_sec),
+                    handshake_timeout: Duration::from_secs(config.network.connect_timeout_sec),
+                    max_ops_per_response: config.replication.max_ops_per_response,
+                    replicate: true,
+                },
+            )?;
+
+            // Start mDNS discovery (if enabled) and bridge discovered,
+            // authorized peers into the sync loop.
+            #[cfg(feature = "mdns")]
+            let (discovery_handle, discovery_rx) = if config.discovery.enabled {
+                match crate::discovery::Discovery::start(
+                    &config.discovery,
+                    &identity.node_id,
+                    &config.node.node_name,
+                    local_addr.port(),
+                    env!("CARGO_PKG_VERSION"),
+                ) {
+                    Ok(mut discovery) => match discovery.browse(identity.node_id.clone()) {
+                        Ok(mut rx) => {
+                            let (tx, peer_rx) = tokio::sync::mpsc::unbounded_channel();
+                            let pool = storage.pool().clone();
+                            tokio::spawn(async move {
+                                while let Some(peer) = rx.recv().await {
+                                    match crate::sync_loop::authorized_peer_ids(&pool).await {
+                                        Ok(ids) if ids.contains(&peer.node_id) => {
+                                            let cfg = PeerConfig {
+                                                node_id: peer.node_id.clone(),
+                                                address: peer.address(),
+                                            };
+                                            if tx.send(cfg).is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Ok(_) => tracing::debug!(
+                                            peer = %peer.node_id,
+                                            "discovered peer is not authorized; ignoring"
+                                        ),
+                                        Err(e) => tracing::warn!(
+                                            error = %e,
+                                            "failed to check discovered peer authorization"
+                                        ),
+                                    }
+                                }
+                            });
+                            (Some(discovery), Some(peer_rx))
+                        }
+                        Err(e) => {
+                            eprintln!("mDNS browse failed: {e}");
+                            (Some(discovery), None)
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("mDNS discovery disabled: {e}");
+                        (None, None)
+                    }
+                }
+            } else {
+                (None, None)
+            };
+
+            #[cfg(not(feature = "mdns"))]
+            let (discovery_handle, discovery_rx): (
+                Option<()>,
+                Option<tokio::sync::mpsc::UnboundedReceiver<PeerConfig>>,
+            ) = {
+                if config.discovery.enabled {
+                    eprintln!(
+                        "discovery.enabled is set but this build lacks the 'mdns' feature; \
+                         continuing without discovery."
+                    );
+                }
+                (None, None)
+            };
+
+            // Outbound sync loop: static peers plus any discovered at runtime.
+            let sync_handle = if config.peers.is_empty() && discovery_rx.is_none() {
+                None
+            } else {
+                let connector = build_client_connector(config, data_dir)?;
+                let opts = crate::sync_loop::SyncLoopOptions {
+                    max_message_size: config.network.max_message_size,
+                    max_ops_per_response: config.replication.max_ops_per_response,
+                    connect_timeout: Duration::from_secs(config.network.connect_timeout_sec),
+                    idle_timeout: Duration::from_secs(config.network.idle_timeout_sec),
+                    interval: Duration::from_secs(config.replication.sync_interval_sec),
+                    backoff_max: Duration::from_secs(config.replication.reconnect_backoff_max_sec),
+                };
+                let pool = storage.pool().clone();
+                let node_id = identity.node_id.clone();
+                let node_name = config.node.node_name.clone();
+                Some(match discovery_rx {
+                    Some(rx) => crate::sync_loop::spawn_sync_loop_with_updates(
+                        pool,
+                        connector,
+                        node_id,
+                        node_name,
+                        config.peers.clone(),
+                        opts,
+                        rx,
+                    ),
+                    None => crate::sync_loop::spawn_sync_loop(
+                        pool,
+                        connector,
+                        node_id,
+                        node_name,
+                        config.peers.clone(),
+                        opts,
+                    ),
+                })
+            };
+
+            println!(
+                "SyncFleet daemon listening on {local_addr} (node '{}', {}).",
+                config.node.node_name,
+                storage_peer_summary(&storage).await?
+            );
+            if config.discovery.enabled {
+                println!(
+                    "mDNS discovery active (service '{}').",
+                    config.discovery.service_name
+                );
+            }
+            match &sync_handle {
+                Some(h) if h.peer_count() > 0 => {
+                    println!("Syncing with {} peer(s).", h.peer_count())
+                }
+                Some(_) => println!("Sync loop running; discovering peers."),
+                None => println!("No peers configured; serving inbound connections only."),
+            }
+            println!("Press Ctrl-C to stop.");
+
+            tokio::signal::ctrl_c().await?;
+            println!("Shutting down.");
+            if let Some(sync_handle) = sync_handle {
+                sync_handle.shutdown().await;
+            }
+            #[cfg(feature = "mdns")]
+            if let Some(discovery) = discovery_handle {
+                let _ = discovery.shutdown();
+            }
+            #[cfg(not(feature = "mdns"))]
+            let _ = discovery_handle;
+            handle.shutdown().await;
+            storage.close().await;
+            Ok(())
         }
         DaemonAction::Stop => Err(SyncFleetError::Internal(
-            "Daemon control is not implemented yet (see docs/ROADMAP.md).".to_string(),
+            "Daemon stop is not implemented yet; run the foreground daemon and press Ctrl-C."
+                .to_string(),
         )),
         DaemonAction::Restart => Err(SyncFleetError::Internal(
-            "Daemon control is not implemented yet (see docs/ROADMAP.md).".to_string(),
+            "Daemon restart is not implemented yet; stop and start the daemon manually."
+                .to_string(),
         )),
     }
+}
+
+async fn storage_peer_summary(storage: &Storage) -> Result<String> {
+    let peers = storage::peers::list_peers(storage.pool()).await?;
+    let datasets = storage::datasets::list_datasets(storage.pool()).await?;
+    Ok(format!(
+        "{} dataset(s), {} peer authorization(s)",
+        datasets.len(),
+        peers.len()
+    ))
 }
 
 async fn cmd_doctor(config: &SyncFleetConfig, args: DoctorArgs) -> Result<()> {

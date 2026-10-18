@@ -13,8 +13,12 @@
 
 pub mod cli;
 pub mod config;
+#[cfg(feature = "mdns")]
+pub mod discovery;
 pub mod error;
 pub mod identity;
 pub mod net;
+pub mod replication;
 pub mod storage;
+pub mod sync_loop;
 pub mod tls;

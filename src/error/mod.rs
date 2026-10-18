@@ -221,6 +221,7 @@ pub enum TransportError {
 
 #[derive(Error, Debug)]
 pub enum DiscoveryError {
+    #[cfg(feature = "mdns")]
     #[error("mDNS error: {0}")]
     Mdns(#[from] mdns_sd::Error),
 

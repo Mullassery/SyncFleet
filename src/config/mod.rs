@@ -128,6 +128,8 @@ pub struct ReplicationConfig {
     pub initial_sync_timeout_sec: u64,
     pub snapshot_bootstrap_enabled: bool,
     pub max_snapshot_size_mb: u64,
+    /// Maximum delay between reconnect attempts to an unreachable static peer.
+    pub reconnect_backoff_max_sec: u64,
 }
 
 impl Default for ReplicationConfig {
@@ -140,6 +142,7 @@ impl Default for ReplicationConfig {
             initial_sync_timeout_sec: 60,
             snapshot_bootstrap_enabled: true,
             max_snapshot_size_mb: 500,
+            reconnect_backoff_max_sec: 300,
         }
     }
 }
@@ -208,6 +211,17 @@ impl Default for DaemonConfig {
     }
 }
 
+/// A statically configured peer (Phase 5 — static peers). Used by `sync now`
+/// when `--peer` is given without `--addr`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeerConfig {
+    /// The peer's node id (as signed into its certificate SAN).
+    pub node_id: String,
+    /// `host:port` to connect to.
+    pub address: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SyncFleetConfig {
@@ -219,6 +233,8 @@ pub struct SyncFleetConfig {
     pub security: SecurityConfig,
     pub metrics: MetricsConfig,
     pub daemon: DaemonConfig,
+    /// Statically configured peers for `sync now`.
+    pub peers: Vec<PeerConfig>,
 }
 
 impl SyncFleetConfig {

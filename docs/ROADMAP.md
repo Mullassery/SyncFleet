@@ -72,48 +72,53 @@
 
 ### Milestone 3.3 - Authorization
 - [x] Per-dataset ACLs (read/write/admin)
-- [x] Authorization enforced on the peering handshake (per-operation
-  enforcement lands with replication in Phase 4)
+- [x] Authorization enforced on the peering handshake and per-operation
+  during replication (`replication::ensure_authorized`)
 - [x] Peer revocation (`syncfleet peer revoke`)
 - [x] Revocation checking on connection
 
 ## Phase 4: Incremental Replication
 
 ### Milestone 4.1 - Sync Protocol
-- [ ] Hello/HelloAck handshake
-- [ ] Checkpoint exchange
-- [ ] Missing operation range identification
-- [ ] Bounded operation streaming
+- [x] Hello/HelloAck handshake (reuses the peering `Hello`/`HelloReply`)
+- [x] Checkpoint exchange (version-vector `Have`/`Ops` messages)
+- [x] Missing operation range identification
+- [x] Bounded operation streaming (`replication.max_ops_per_response`)
 
 ### Milestone 4.2 - Idempotent Application
-- [ ] Operation validation (checksum, schema, auth)
-- [ ] Deduplication via applied_operations table
-- [ ] Atomic apply + checkpoint update
-- [ ] Acknowledgment protocol
+- [x] Operation validation (checksum, schema, auth)
+- [x] Deduplication via applied_operations table
+- [x] Atomic apply + checkpoint update
+- [x] Acknowledgment protocol (`Ack { applied }`)
 
 ### Milestone 4.3 - Resilience
-- [ ] Connection interruption handling
-- [ ] Automatic reconnection with backoff
-- [ ] Resume from last checkpoint
-- [ ] Snapshot/bootstrap for new peers
+- [x] Connection interruption handling (bounded timeouts on every read/write;
+  an interrupted session simply resumes on the next one)
+- [x] Automatic reconnection with backoff (daemon sync loop; see `sync_loop`)
+- [x] Resume from last checkpoint (re-sync is idempotent and vector-based)
+- [x] Snapshot/bootstrap for new peers (full journal replay, batched and looped
+  to completion in a single session — no compacted-table snapshot yet)
 
 ### Milestone 4.4 - End-to-End Test
-- [ ] Two-node integration test
-- [ ] Offline modification test
-- [ ] Restart persistence test
-- [ ] Conflict detection test
+- [x] Two-node integration test
+- [x] Offline modification test (ops staged locally before connecting)
+- [x] Restart persistence test (`state_survives_restart`)
+- [ ] Conflict detection test (Phase 6)
 
 ## Phase 5: Discovery and Multi-Peer Topology
 
 ### Milestone 5.1 - mDNS Discovery
-- [ ] Service advertisement (using `mdns-sd`)
-- [ ] Peer discovery and connection
-- [ ] Configuration controls (enable/disable, interface binding)
+- [x] Service advertisement (`_syncfleet._tcp.local.` via `mdns-sd`, TXT node
+  id / name / version, `enable_addr_auto`)
+- [x] Peer discovery and connection (resolved peers are fed into the sync loop
+  and only dialled once they appear in `peer_authorizations`)
+- [ ] Configuration controls (enable/disable via `discovery.enabled` is wired;
+  `discovery.interface` binding is not yet applied)
 
 ### Milestone 5.2 - Static Peers
-- [ ] Configured peer list
-- [ ] Connection management
-- [ ] Health checking
+- [x] Configured peer list (`[[peers]]` in config)
+- [x] Connection management (one background task per peer in `sync_loop`)
+- [ ] Health checking (peers are retried with backoff; no explicit liveness probe)
 
 ### Milestone 5.3 - Topology Management
 - [ ] Connection pooling
