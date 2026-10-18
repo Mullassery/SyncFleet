@@ -55,8 +55,9 @@ Implemented concurrent-write conflict detection in this pass:
   when a remote op is concurrent with the latest same-entity op from another
   origin. `remote_wins` policy auto-resolves that record; other policies remain
   manual via the CLI.
-- New storage test covers detection; full suite 55 passed; fmt/clippy clean.
-- Version `0.3.0`.
+- Storage tests cover detection and `remote_wins` auto-resolution; full suite
+  56 passed; fmt/clippy clean.
+- Version `0.4.0`.
 
 Still open: `local_wins`/CRDT/last-write-wins row materialization, schema
 evolution, mDNS interface binding, and relay/NAT traversal.
