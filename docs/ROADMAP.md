@@ -137,8 +137,8 @@
 - [x] `syncfleet conflicts list|show|resolve` commands
 - [x] Conflict metadata recording
 - [x] Manual admin resolution workflow
-- [x] `remote_wins` policy auto-resolves conflict records
-- [ ] `local_wins` / CRDT / last-write-wins row materialization
+- [x] `remote_wins`, `local_wins`, and `last_write_wins` policies
+- [ ] CRDT / field-level merge semantics
 
 ## Phase 7: Snapshots, Backup, and Recovery
 

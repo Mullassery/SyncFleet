@@ -337,6 +337,9 @@ pub mod operations {
         Applied,
         /// The operation had already been applied; the call was a no-op.
         Duplicate,
+        /// The operation lost a policy conflict and was not journaled; the
+        /// checkpoint still advances so it is not redelivered.
+        Rejected,
     }
 
     /// Apply an operation received from a peer.
@@ -386,7 +389,7 @@ pub mod operations {
         // conflict row is what makes the situation visible instead of silently
         // picking one value.
         let existing = sqlx::query(
-            "SELECT id, causal_metadata FROM operation_journal
+            "SELECT id, causal_metadata, created_at FROM operation_journal
              WHERE dataset_id = ? AND entity_id = ? AND origin_node_id != ?
              ORDER BY created_at DESC LIMIT 1",
         )
@@ -398,6 +401,7 @@ pub mod operations {
         if let Some(row) = existing {
             let existing_id: String = row.try_get("id")?;
             let existing_causal: String = row.try_get("causal_metadata")?;
+            let existing_created: String = row.try_get("created_at")?;
             let existing_vector: VersionVector = serde_json::from_str(&existing_causal)?;
             if op.causal_metadata.is_concurrent(&existing_vector) {
                 let policy: Option<String> =
@@ -405,13 +409,25 @@ pub mod operations {
                         .bind(&op.dataset_id)
                         .fetch_optional(&mut *tx)
                         .await?;
-                // Only remote_wins is auto-resolved: the remote operation is
-                // the one this function applies. local_wins would require
-                // withholding the remote op and replaying local state, which
-                // this engine does not materialize; leave those conflicts open.
-                let auto_remote = matches!(policy.as_deref(), Some("remote_wins") | Some("remote"));
-                let resolved_at = auto_remote.then(|| Utc::now().to_rfc3339());
-                let resolution = auto_remote.then_some("remote");
+                let policy = policy.as_deref().unwrap_or("manual");
+                let remote_wins = match policy {
+                    "remote_wins" | "remote" => true,
+                    "local_wins" | "local" => false,
+                    "last_write_wins" | "lww" => {
+                        let local_time = DateTime::parse_from_rfc3339(&existing_created)
+                            .map(|value| value.with_timezone(&Utc))
+                            .unwrap_or(op.created_at);
+                        op.created_at >= local_time
+                    }
+                    _ => true,
+                };
+                let auto_resolve = matches!(
+                    policy,
+                    "remote_wins" | "remote" | "local_wins" | "local" | "last_write_wins" | "lww"
+                );
+                let resolution =
+                    auto_resolve.then_some(if remote_wins { "remote" } else { "local" });
+                let resolved_at = resolution.map(|_| Utc::now().to_rfc3339());
                 sqlx::query(
                     "INSERT INTO conflicts
                      (id, operation_id, conflict_type, local_operation_id,
@@ -428,6 +444,27 @@ pub mod operations {
                 .bind(resolution)
                 .execute(&mut *tx)
                 .await?;
+
+                if !remote_wins {
+                    // Local state wins: do not journal the remote operation,
+                    // but advance the checkpoint so it is not redelivered.
+                    let now = Utc::now().to_rfc3339();
+                    sqlx::query(
+                        "INSERT INTO replication_checkpoints (peer_id, dataset_id, last_acked_seq, last_applied_seq, updated_at)
+                         VALUES (?, ?, 0, ?, ?)
+                         ON CONFLICT(peer_id, dataset_id) DO UPDATE SET
+                             last_applied_seq = excluded.last_applied_seq,
+                             updated_at = excluded.updated_at",
+                    )
+                    .bind(&op.origin_node_id)
+                    .bind(&op.dataset_id)
+                    .bind(op.origin_seq as i64)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                    return Ok(ApplyOutcome::Rejected);
+                }
             }
         }
 

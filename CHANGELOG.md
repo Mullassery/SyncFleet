@@ -5,6 +5,16 @@ All notable changes to SyncFleet will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-19
+
+### Added
+- `conflict_policy = "local_wins"` rejects a concurrent remote operation
+  without journaling it, records the conflict as resolved `local`, and still
+  advances the checkpoint so the peer does not redeliver it.
+- `conflict_policy = "last_write_wins"` compares operation timestamps and
+  routes to the remote or local path accordingly.
+- Storage test covers the `local_wins` rejection path.
+
 ## [0.4.0] - 2026-10-19
 
 ### Added

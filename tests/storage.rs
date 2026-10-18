@@ -560,3 +560,70 @@ fn remote_wins_policy_auto_resolves_concurrent_conflict() {
         assert!(conflicts[0].resolved_at.is_some());
     });
 }
+
+#[test]
+fn local_wins_policy_rejects_remote_without_journaling_it() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        let dataset = storage::datasets::Dataset {
+            dataset_id: "orders".to_string(),
+            schema_version: 1,
+            conflict_policy: "local_wins".to_string(),
+            table_allowlist: vec!["orders".to_string()],
+            created_at: chrono::Utc::now(),
+        };
+        storage::datasets::register_dataset(storage.pool(), &dataset)
+            .await
+            .unwrap();
+
+        storage::operations::append_local_operation(
+            storage.pool(),
+            storage::operations::LocalOperation {
+                dataset_id: "orders".to_string(),
+                entity_id: "order-1".to_string(),
+                op_type: storage::operations::OperationType::Update,
+                schema_version: 1,
+                payload: b"{\"n\":1}".to_vec(),
+                origin_node_id: "node-a".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let payload = b"{\"n\":2}".to_vec();
+        let mut causal = storage::operations::VersionVector::new();
+        causal.increment("node-b");
+        let remote = storage::operations::Operation {
+            id: Uuid::new_v4(),
+            dataset_id: "orders".to_string(),
+            entity_id: "order-1".to_string(),
+            origin_node_id: "node-b".to_string(),
+            origin_seq: 1,
+            op_type: storage::operations::OperationType::Update,
+            schema_version: 1,
+            payload: payload.clone(),
+            causal_metadata: causal,
+            created_at: chrono::Utc::now(),
+            checksum: storage::operations::compute_checksum(&payload),
+        };
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &remote)
+            .await
+            .unwrap();
+        assert_eq!(outcome, storage::operations::ApplyOutcome::Rejected);
+
+        let conflicts = storage::conflicts::list_conflicts(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(conflicts[0].resolution.as_deref(), Some("local"));
+        let stats = storage::operations::journal_stats(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(stats.operations, 1, "remote op must not be journaled");
+        // The remote op is marked applied so it is not redelivered.
+        let stats_after = storage::operations::journal_stats(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(stats_after.applied_operations, 1);
+    });
+}

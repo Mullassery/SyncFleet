@@ -180,10 +180,11 @@ syncfleet doctor --full
 > **Conflict handling:** concurrent writes from different origins are detected
 > and recorded in the `conflicts` table during apply. With a dataset
 > `conflict_policy = "remote_wins"`, the conflict record is auto-resolved in
-> favour of the applied remote operation; other policies require manual
-> `syncfleet conflicts list|show|resolve`. `local_wins` is not implemented
-> because the engine does not materialize local row state. mDNS interface
-> binding is also still open.
+> favour of the applied remote operation. `local_wins` rejects the remote
+> operation without journaling it (the checkpoint still advances), and
+> `last_write_wins` compares operation timestamps. Other policies record an
+> open conflict for manual `syncfleet conflicts list|show|resolve`. mDNS
+> interface binding is also still open.
 
 ---
 
