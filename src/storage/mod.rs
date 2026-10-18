@@ -1158,3 +1158,227 @@ pub mod enrollment {
         }))
     }
 }
+
+/// Disk-backed disconnection-boundary spool with ring-buffer eviction for
+/// low-priority telemetry while preserving critical state history (RECHECK-027).
+pub mod spool {
+    use super::*;
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[repr(i32)]
+    pub enum SpoolPriority {
+        /// Low-priority telemetry; evicted oldest-first when the spool hits its
+        /// ring-buffer capacity during a prolonged connectivity blackout.
+        Low = 0,
+        /// Critical state history; never evicted by low-priority overflow.
+        Critical = 1,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SpooledRecord {
+        pub id: i64,
+        pub dataset_id: String,
+        pub priority: SpoolPriority,
+        pub payload: Vec<u8>,
+        pub created_at: DateTime<Utc>,
+    }
+
+    /// Ensure the `disconnection_spool` table exists on `pool`.
+    pub async fn ensure_table(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS disconnection_spool (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dataset_id TEXT NOT NULL,
+                priority INTEGER NOT NULL,
+                payload BLOB NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_disconnection_spool_priority_id
+                ON disconnection_spool (priority ASC, id ASC);
+            "#,
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Enqueue a record into the disk-backed spool, enforcing `max_entries` via
+    /// ring-buffer eviction of `SpoolPriority::Low` entries before preserving
+    /// `SpoolPriority::Critical` state history.
+    ///
+    /// Returns `Ok(true)` if the record was stored, or `Ok(false)` if the spool
+    /// is already full of `Critical` records and the incoming record is `Low`.
+    pub async fn enqueue(
+        pool: &SqlitePool,
+        dataset_id: &str,
+        priority: SpoolPriority,
+        payload: &[u8],
+        max_entries: usize,
+    ) -> Result<bool> {
+        ensure_table(pool).await?;
+        let cap = max_entries.max(1) as i64;
+        let mut tx = pool.begin().await?;
+
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM disconnection_spool")
+            .fetch_one(&mut *tx)
+            .await?;
+
+        if total >= cap {
+            let overflow = (total - cap) + 1;
+            let evicted = sqlx::query(
+                r#"
+                DELETE FROM disconnection_spool
+                WHERE id IN (
+                    SELECT id FROM disconnection_spool
+                    WHERE priority = 0
+                    ORDER BY id ASC
+                    LIMIT ?
+                )
+                "#,
+            )
+            .bind(overflow)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected() as i64;
+
+            let remaining = total - evicted;
+            if remaining >= cap {
+                if priority == SpoolPriority::Low {
+                    // Spool is saturated with Critical entries; drop incoming Low telemetry.
+                    tx.commit().await?;
+                    return Ok(false);
+                }
+                // Incoming record is Critical and no Low entries remain: evict oldest Critical
+                // only as a last resort to honor the hard disk bound.
+                let still_over = (remaining - cap) + 1;
+                sqlx::query(
+                    r#"
+                    DELETE FROM disconnection_spool
+                    WHERE id IN (
+                        SELECT id FROM disconnection_spool
+                        ORDER BY id ASC
+                        LIMIT ?
+                    )
+                    "#,
+                )
+                .bind(still_over)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO disconnection_spool (dataset_id, priority, payload, created_at)
+            VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(dataset_id)
+        .bind(priority as i32)
+        .bind(payload)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Drain up to `limit` spooled records in FIFO order (critical first, then by id).
+    pub async fn drain_batch(pool: &SqlitePool, limit: usize) -> Result<Vec<SpooledRecord>> {
+        ensure_table(pool).await?;
+        let rows = sqlx::query(
+            r#"
+            SELECT id, dataset_id, priority, payload, created_at
+            FROM disconnection_spool
+            ORDER BY priority DESC, id ASC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        let mut ids: Vec<i64> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: i64 = row.try_get("id")?;
+            let prio_raw: i32 = row.try_get("priority")?;
+            let priority = if prio_raw > 0 {
+                SpoolPriority::Critical
+            } else {
+                SpoolPriority::Low
+            };
+            let created_at =
+                DateTime::parse_from_rfc3339(&row.try_get::<String, _>("created_at")?)?
+                    .with_timezone(&Utc);
+            ids.push(id);
+            out.push(SpooledRecord {
+                id,
+                dataset_id: row.try_get("dataset_id")?,
+                priority,
+                payload: row.try_get("payload")?,
+                created_at,
+            });
+        }
+
+        if !ids.is_empty() {
+            let mut tx = pool.begin().await?;
+            for id in ids {
+                sqlx::query("DELETE FROM disconnection_spool WHERE id = ?")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await?;
+        }
+
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod spool_tests {
+    use super::spool::{drain_batch, enqueue, SpoolPriority};
+    use super::Storage;
+
+    #[tokio::test]
+    async fn spool_evicts_low_priority_before_critical_during_blackout() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        let pool = storage.pool();
+
+        // Cap = 3: insert 2 Critical and 1 Low.
+        assert!(enqueue(pool, "ds", SpoolPriority::Critical, b"crit-1", 3)
+            .await
+            .unwrap());
+        assert!(enqueue(pool, "ds", SpoolPriority::Low, b"low-1", 3)
+            .await
+            .unwrap());
+        assert!(enqueue(pool, "ds", SpoolPriority::Critical, b"crit-2", 3)
+            .await
+            .unwrap());
+
+        // Overflow with a new Low entry: must evict "low-1" and keep both Critical entries.
+        assert!(enqueue(pool, "ds", SpoolPriority::Low, b"low-2", 3)
+            .await
+            .unwrap());
+
+        // Overflow with a 3rd Critical entry: must evict "low-2" so all 3 slots hold Critical.
+        assert!(enqueue(pool, "ds", SpoolPriority::Critical, b"crit-3", 3)
+            .await
+            .unwrap());
+
+        // Now all 3 slots are Critical; a new Low entry must be dropped rather than evicting Critical.
+        assert!(!enqueue(pool, "ds", SpoolPriority::Low, b"low-3", 3)
+            .await
+            .unwrap());
+
+        let drained = drain_batch(pool, 10).await.unwrap();
+        let payloads: Vec<&[u8]> = drained.iter().map(|r| r.payload.as_slice()).collect();
+        assert_eq!(payloads, vec![b"crit-1", b"crit-2", b"crit-3"]);
+    }
+}

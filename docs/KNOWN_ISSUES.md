@@ -2,14 +2,10 @@
 
 ## Current Limitations (MVP)
 
-### 0. Networking Not Yet Implemented
-- **Issue**: The daemon, TLS transport, enrollment handshake, and incremental
-  replication are not implemented (Phases 3–4).
-- **Impact**: `syncfleet` currently operates as a single-node local store. The
-  CLI can register datasets, authorize peers, inspect checkpoints, and run
-  diagnostics, but no data is exchanged over the network.
-- **Workaround**: None; local use only.
-- **Future**: Phase 3 (TLS + enrollment) and Phase 4 (replication).
+### 0. Networking & Replication Status (Phases 3–4 Implemented)
+- **Status**: Resolved in v0.2.0.
+- **Details**: Mutual-TLS peering (`src/net/mod.rs`), signed single-use enrollment tokens (`src/tls/enrollment.rs`), incremental pull/push replication (`src/replication/mod.rs`), mDNS peer discovery (`src/discovery/mod.rs`), background `sync_loop`, and disk-backed disconnection spooling with priority ring-buffer eviction (`src/storage::spool`) are now implemented.
+- **Remaining**: Automated conflict resolution runtime (beyond LWW/version-vector detection), mDNS interface pinning, and daemon stop/restart PID management.
 
 ### 1. Single-Writer Only
 - **Issue**: Only one writer per dataset supported
