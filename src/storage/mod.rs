@@ -196,6 +196,16 @@ pub mod operations {
             }
             dominated
         }
+
+        /// True when neither vector dominates the other: both sides made
+        /// changes the other has not seen. This is the condition that needs
+        /// conflict handling, regardless of which value wins.
+        pub fn is_concurrent(&self, other: &VersionVector) -> bool {
+            if self.versions == other.versions {
+                return false;
+            }
+            !self.happens_before(other) && !other.happens_before(self)
+        }
     }
 
     pub async fn append_operation(pool: &SqlitePool, op: &Operation) -> Result<()> {
@@ -369,6 +379,42 @@ pub mod operations {
         if marked.rows_affected() == 0 {
             tx.rollback().await?;
             return Ok(ApplyOutcome::Duplicate);
+        }
+
+        // Detect concurrent writes to the same entity from a different origin.
+        // The operation is still applied (the caller can resolve later); the
+        // conflict row is what makes the situation visible instead of silently
+        // picking one value.
+        let existing = sqlx::query(
+            "SELECT id, causal_metadata FROM operation_journal
+             WHERE dataset_id = ? AND entity_id = ? AND origin_node_id != ?
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(&op.dataset_id)
+        .bind(&op.entity_id)
+        .bind(&op.origin_node_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(row) = existing {
+            let existing_id: String = row.try_get("id")?;
+            let existing_causal: String = row.try_get("causal_metadata")?;
+            let existing_vector: VersionVector = serde_json::from_str(&existing_causal)?;
+            if op.causal_metadata.is_concurrent(&existing_vector) {
+                sqlx::query(
+                    "INSERT INTO conflicts
+                     (id, operation_id, conflict_type, local_operation_id,
+                      remote_operation_id, detected_at, resolved_at, resolution)
+                     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind(op.id.to_string())
+                .bind("concurrent_write")
+                .bind(existing_id)
+                .bind(op.id.to_string())
+                .bind(Utc::now().to_rfc3339())
+                .execute(&mut *tx)
+                .await?;
+            }
         }
 
         let causal_json = serde_json::to_string(&op.causal_metadata)?;

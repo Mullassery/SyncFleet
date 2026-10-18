@@ -130,12 +130,13 @@
 ### Milestone 6.1 - Single-Writer Enforcement
 - [ ] Writer designation per dataset
 - [ ] Unauthorized write detection
-- [ ] Conflict quarantine
+- [x] Concurrent-write detection (version vectors) and conflict quarantine
 
 ### Milestone 6.2 - Conflict Inspection
-- [ ] `syncfleet conflicts list` command
-- [ ] Conflict metadata recording
-- [ ] Admin resolution workflow
+- [x] `syncfleet conflicts list|show|resolve` commands
+- [x] Conflict metadata recording
+- [x] Manual admin resolution workflow
+- [ ] Automatic policy-based resolution (LWW/CRDT)
 
 ## Phase 7: Snapshots, Backup, and Recovery
 

@@ -57,9 +57,10 @@ Being explicit about scope:
   backups are a separate concern.
 - **Not finished.** This is an actively developed project. Today you can
   initialize nodes, manage datasets and peers, issue/redeem enrollment tokens,
-  pin certificates, and inspect the journal. **Automated data replication, the
-  background daemon, conflict resolution, and mDNS discovery are on the
-  [roadmap](docs/ROADMAP.md) and are not wired up yet** (see *Current Status*).
+  pin certificates, and inspect the journal. Automated replication and the
+  background daemon are wired; concurrent-write conflicts are detected and
+  recorded for manual resolution. Policy-based automatic resolution and mDNS
+  interface binding remain on the [roadmap](docs/ROADMAP.md).
 - **Not hardened for the public internet out of the box.** The intended
   deployments are trusted LANs/VPNs between nodes you control.
 
@@ -176,8 +177,10 @@ syncfleet doctor --full
 > per peer (retrying with exponential backoff), so manual `sync now` is only
 > needed for one-off syncs.
 >
-> **Not yet available:** conflict resolution and mDNS interface binding (see
-> [ROADMAP.md](docs/ROADMAP.md)).
+> **Conflict handling:** concurrent writes from different origins are detected
+> and recorded in the `conflicts` table during apply. Resolve them manually with
+> `syncfleet conflicts list|show|resolve`; automatic policy-based resolution is
+> not implemented. mDNS interface binding is also still open.
 
 ---
 
@@ -237,7 +240,8 @@ than failing silently.
 - `doctor` diagnostics and journal inspection/compaction
 - Python wrapper + PyPI packaging
 
-Not implemented yet: conflict resolution runtime, mDNS interface binding, and
+Not implemented yet: automatic/policy conflict resolution (concurrent writes
+are detected and recorded for manual resolution), mDNS interface binding, and
 daemon process control (`stop`/`restart`).
 
 See [ROADMAP.md](docs/ROADMAP.md) for details.

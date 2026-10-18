@@ -48,4 +48,15 @@ Invest only if conflict semantics are funded; otherwise narrow to a reference P2
 
 ## Implementation status
 
-No code changes in this pass.
+Implemented concurrent-write conflict detection in this pass:
+
+- `VersionVector::is_concurrent` (neither vector dominates the other).
+- `apply_remote_operation` records a `concurrent_write` row in `conflicts`
+  when a remote op is concurrent with the latest same-entity op from another
+  origin. The op is still applied; resolution remains manual via the existing
+  CLI commands.
+- New storage test covers detection; full suite 55 passed; fmt/clippy clean.
+- Version `0.3.0`.
+
+Still open: automatic policy-based resolution (LWW/CRDT), schema evolution,
+mDNS interface binding, and relay/NAT traversal.

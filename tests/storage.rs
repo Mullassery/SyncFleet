@@ -447,3 +447,57 @@ fn apply_remote_operation_requires_registered_dataset() {
         );
     });
 }
+
+#[test]
+fn concurrent_remote_write_records_a_conflict() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders(&storage).await;
+
+        // Local write from node-a.
+        storage::operations::append_local_operation(
+            storage.pool(),
+            storage::operations::LocalOperation {
+                dataset_id: "orders".to_string(),
+                entity_id: "order-1".to_string(),
+                op_type: storage::operations::OperationType::Update,
+                schema_version: 1,
+                payload: b"{\"n\":1}".to_vec(),
+                origin_node_id: "node-a".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Remote write from node-b with a concurrent version vector.
+        let payload = b"{\"n\":2}".to_vec();
+        let mut causal = storage::operations::VersionVector::new();
+        causal.increment("node-b");
+        let remote = storage::operations::Operation {
+            id: Uuid::new_v4(),
+            dataset_id: "orders".to_string(),
+            entity_id: "order-1".to_string(),
+            origin_node_id: "node-b".to_string(),
+            origin_seq: 1,
+            op_type: storage::operations::OperationType::Update,
+            schema_version: 1,
+            payload: payload.clone(),
+            causal_metadata: causal,
+            created_at: chrono::Utc::now(),
+            checksum: storage::operations::compute_checksum(&payload),
+        };
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &remote)
+            .await
+            .unwrap();
+        assert_eq!(outcome, storage::operations::ApplyOutcome::Applied);
+
+        let conflicts = storage::conflicts::list_conflicts(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].conflict_type, "concurrent_write");
+        assert_eq!(conflicts[0].remote_operation_id, remote.id.to_string());
+        assert!(conflicts[0].resolved_at.is_none());
+    });
+}

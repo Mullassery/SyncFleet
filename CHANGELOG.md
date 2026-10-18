@@ -5,6 +5,17 @@ All notable changes to SyncFleet will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-19
+
+### Added
+- Concurrent-write detection during `apply_remote_operation`: when a remote
+  operation's version vector is concurrent with the latest journal entry for the
+  same dataset/entity from another origin, a `concurrent_write` row is recorded
+  in `conflicts`. The operation is still applied; operators resolve it with the
+  existing `syncfleet conflicts list|show|resolve` commands. Automatic
+  policy-based resolution is not implemented.
+- Test: `concurrent_remote_write_records_a_conflict` (storage suite).
+
 ## [Unreleased]
 
 ### Added
