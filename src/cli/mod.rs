@@ -118,6 +118,8 @@ pub enum DatasetAction {
     Show { dataset_id: String },
     /// Remove a dataset (local only)
     Remove { dataset_id: String },
+    /// Update a dataset's schema version after a migration
+    Schema { dataset_id: String, version: u32 },
     /// Record a local operation in the journal (for replication/testing)
     Apply(ApplyDatasetArgs),
 }
@@ -688,6 +690,20 @@ async fn cmd_dataset(config: &SyncFleetConfig, args: DatasetArgs) -> Result<()> 
                     )));
                 }
             }
+        }
+        DatasetAction::Schema {
+            dataset_id,
+            version,
+        } => {
+            if storage::datasets::set_schema_version(storage.pool(), &dataset_id, version).await? {
+                println!(
+                    "Dataset '{}' schema_version set to {}.",
+                    dataset_id, version
+                );
+            } else {
+                println!("Dataset '{}' not found.", dataset_id);
+            }
+            Ok(())
         }
         DatasetAction::Remove { dataset_id } => {
             if storage::datasets::remove_dataset(storage.pool(), &dataset_id).await? {

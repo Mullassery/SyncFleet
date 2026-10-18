@@ -959,6 +959,22 @@ pub mod datasets {
         Ok(datasets)
     }
 
+    /// Update a dataset's schema version after an operator-run migration.
+    /// This does not migrate data; it only admits operations built against
+    /// the new version.
+    pub async fn set_schema_version(
+        pool: &SqlitePool,
+        dataset_id: &str,
+        schema_version: u32,
+    ) -> Result<bool> {
+        let result = sqlx::query("UPDATE datasets SET schema_version = ? WHERE dataset_id = ?")
+            .bind(schema_version as i32)
+            .bind(dataset_id)
+            .execute(pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn remove_dataset(pool: &SqlitePool, dataset_id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM datasets WHERE dataset_id = ?")
             .bind(dataset_id)

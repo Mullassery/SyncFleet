@@ -184,8 +184,9 @@ syncfleet doctor --full
 > operation without journaling it (the checkpoint still advances), and
 > `last_write_wins` compares operation timestamps. An operation whose
 > `schema_version` differs from the local dataset is rejected and recorded as
-> a `schema_version_mismatch` conflict; the operator must update the dataset or
-> publish a compatible operation. Other policies record an open conflict for
+> a `schema_version_mismatch` conflict; after a migration, update the local
+> dataset with `syncfleet dataset schema <id> <version>` (or publish a
+> compatible operation). Other policies record an open conflict for
 > manual `syncfleet conflicts list|show|resolve`. mDNS interface binding is
 > also still open.
 

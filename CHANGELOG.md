@@ -5,6 +5,14 @@ All notable changes to SyncFleet will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-19
+
+### Added
+- `syncfleet dataset schema <dataset> <version>` updates the local dataset's
+  schema version after an operator-run migration, so operations built against
+  the new version are accepted. This does not migrate data.
+- Storage test covers the update and missing-dataset cases.
+
 ## [0.6.0] - 2026-10-19
 
 ### Added

@@ -56,9 +56,9 @@ Implemented concurrent-write conflict detection in this pass:
   origin. `remote_wins` policy auto-resolves that record; other policies remain
   manual via the CLI.
 - Storage tests cover detection, `remote_wins` auto-resolution, `local_wins`
-  rejection, and schema-version mismatch; full suite 58 passed; fmt/clippy
-  clean.
-- Version `0.6.0`.
+  rejection, schema-version mismatch, and manual schema-version updates;
+  full suite 59 passed; fmt/clippy clean.
+- Version `0.7.0`.
 
-Still open: schema migration tooling, CRDT/field-level merge semantics, mDNS
+Still open: automated schema migration, CRDT/field-level merge semantics, mDNS
 interface binding, and relay/NAT traversal.

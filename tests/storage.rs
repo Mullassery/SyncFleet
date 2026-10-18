@@ -663,3 +663,25 @@ fn schema_version_mismatch_is_rejected_and_recorded() {
         assert!(conflicts[0].resolved_at.is_none());
     });
 }
+
+#[test]
+fn schema_version_can_be_updated_after_migration() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders(&storage).await;
+        let updated = storage::datasets::set_schema_version(storage.pool(), "orders", 2)
+            .await
+            .unwrap();
+        assert!(updated);
+        let datasets = storage::datasets::list_datasets(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(datasets[0].schema_version, 2);
+        assert!(
+            !storage::datasets::set_schema_version(storage.pool(), "missing", 2)
+                .await
+                .unwrap()
+        );
+    });
+}
