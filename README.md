@@ -274,6 +274,16 @@ See [ROADMAP.md](docs/ROADMAP.md) for details.
 
 ---
 
+## Known issues and deferred work
+
+**Blocked / failed:**
+- CRDT/field-level merge, mDNS interface binding, relay/NAT.
+
+**Rejected / deferred:**
+- A message broker.
+
+Full shipped/blocked/rejected detail: [`QUEUE_STATUS.md`](QUEUE_STATUS.md).
+
 ## Queue status
 
 Shipped, blocked/failed, and rejected work for this repository is documented in
