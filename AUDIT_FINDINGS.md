@@ -59,6 +59,10 @@ Implemented concurrent-write conflict detection in this pass:
   rejection, schema-version mismatch, and manual schema-version updates;
   full suite 59 passed; fmt/clippy clean.
 - Version `0.7.0`.
+- Field-level `merge_fields` conflict policy: disjoint JSON fields are preserved,
+  overlapping fields resolve deterministically by `created_at` then origin node
+  id, and the conflict record is marked `merged`. Implemented in
+  `src/storage/mod.rs` with unit and storage integration tests.
 
-Still open: automated schema migration, CRDT/field-level merge semantics, mDNS
+Still open: automated schema migration, full cr-sqlite CRDT integration, mDNS
 interface binding, and relay/NAT traversal.

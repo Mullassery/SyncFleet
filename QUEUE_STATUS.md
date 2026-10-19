@@ -4,9 +4,10 @@ This file records what was shipped, what is blocked/failed, and what is rejected
 
 ## Shipped
 - Conflict detection, remote/local/LWW policies, schema guard, manual schema update (0.7.0, published).
+- Field-level `merge_fields` conflict policy (deterministic LWW-register over JSON fields, overlaps marked `merged`).
 
 ## Blocked / failed
-- CRDT/field-level merge, mDNS interface binding, relay/NAT.
+- mDNS interface binding, relay/NAT. (Full cr-sqlite CRDT tables remain a separate optional integration.)
 
 ## Rejected / deferred
 - A message broker.

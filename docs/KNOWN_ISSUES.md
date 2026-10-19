@@ -5,13 +5,13 @@
 ### 0. Networking & Replication Status (Phases 3–4 Implemented)
 - **Status**: Resolved in v0.2.0.
 - **Details**: Mutual-TLS peering (`src/net/mod.rs`), signed single-use enrollment tokens (`src/tls/enrollment.rs`), incremental pull/push replication (`src/replication/mod.rs`), mDNS peer discovery (`src/discovery/mod.rs`), background `sync_loop`, and disk-backed disconnection spooling with priority ring-buffer eviction (`src/storage::spool`) are now implemented.
-- **Remaining**: Automated conflict resolution runtime (beyond LWW/version-vector detection), mDNS interface pinning, and daemon stop/restart PID management.
+- **Remaining**: Automated schema migration, mDNS interface pinning, and daemon stop/restart PID management. Field-level merge (`merge_fields`) now ships as a deterministic LWW-register policy over JSON fields.
 
 ### 1. Single-Writer Only
 - **Issue**: Only one writer per dataset supported
 - **Impact**: No concurrent writes from multiple peers
 - **Workaround**: Designate writer per dataset; use partitioning for scale
-- **Future**: Multi-writer with CRDT/LWW/custom merge
+- **Future**: Full multi-writer CRDT; field-level `merge_fields` LWW merge is available, but datasets still designate a writer for other policies
 
 ### 2. No Cross-VLAN Discovery
 - **Issue**: mDNS doesn't traverse routers
@@ -110,7 +110,7 @@
 
 These are explicitly NOT in MVP scope:
 
-1. **Multi-writer CRDTs** - Requires significant design/verification
+1. **Full multi-writer CRDTs** - Requires significant design/verification; the field-level `merge_fields` LWW policy is shipped
 2. **Consensus protocol** (Raft) - Not needed for current use cases
 3. **Global transactions** - Out of scope
 4. **Multi-datacenter geo-replication** - Single region only

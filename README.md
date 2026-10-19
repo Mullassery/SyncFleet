@@ -182,7 +182,8 @@ syncfleet doctor --full
 > `conflict_policy = "remote_wins"`, the conflict record is auto-resolved in
 > favour of the applied remote operation. `local_wins` rejects the remote
 > operation without journaling it (the checkpoint still advances), and
-> `last_write_wins` compares operation timestamps. An operation whose
+> `last_write_wins` compares operation timestamps, and `merge_fields` merges
+> disjoint JSON fields and resolves overlapping fields deterministically. An operation whose
 > `schema_version` differs from the local dataset is rejected and recorded as
 > a `schema_version_mismatch` conflict; after a migration, update the local
 > dataset with `syncfleet dataset schema <id> <version>` (or publish a
@@ -359,3 +360,17 @@ Each works standalone, but they're complementary by design. The planned outbox/C
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+### Field-level merge policy
+
+In addition to `manual`, `remote_wins`, `local_wins` and `last_write_wins`,
+datasets can use `merge_fields` (`--policy merge_fields`). Concurrent updates to
+the same entity are merged key-by-key: disjoint fields are preserved, and
+conflicting fields are resolved deterministically by `created_at` then origin
+node id, so replicas converge without a manual conflict. The conflict record is
+marked `merged` for auditability.
+
+This is an LWW-register merge over SyncFleet's JSON payloads, implemented in the
+existing Rust storage layer. It does not bundle a SQLite CRDT extension; the
+full `cr-sqlite` path remains an optional future integration.
+

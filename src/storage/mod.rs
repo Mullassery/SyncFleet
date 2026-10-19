@@ -342,6 +342,51 @@ pub mod operations {
         Rejected,
     }
 
+    /// Field-level merge for concurrent updates.
+    ///
+    /// Keys present on only one side are kept. For keys present on both
+    /// sides, the later `created_at` wins; ties are broken by the remote
+    /// origin node id so every replica converges on the same value. This is
+    /// a deterministic LWW-register merge over JSON object fields (the
+    /// payloads SyncFleet already writes), not a replacement for a full
+    /// SQLite CRDT extension.
+    pub fn merge_payloads(
+        local_payload: &[u8],
+        remote_payload: &[u8],
+        local_created_at: &str,
+        remote_created_at: &str,
+        local_node_id: &str,
+        remote_node_id: &str,
+    ) -> Option<Vec<u8>> {
+        let local: serde_json::Value = serde_json::from_slice(local_payload).ok()?;
+        let remote: serde_json::Value = serde_json::from_slice(remote_payload).ok()?;
+        let (Some(local_map), Some(remote_map)) = (local.as_object(), remote.as_object()) else {
+            return None;
+        };
+
+        let mut merged = local_map.clone();
+        for (key, remote_value) in remote_map {
+            match merged.get(key) {
+                None => {
+                    merged.insert(key.clone(), remote_value.clone());
+                }
+                Some(local_value) if local_value == remote_value => {}
+                Some(_local_value) => {
+                    let remote_wins = if remote_created_at != local_created_at {
+                        remote_created_at > local_created_at
+                    } else {
+                        remote_node_id > local_node_id
+                    };
+                    if remote_wins {
+                        merged.insert(key.clone(), remote_value.clone());
+                    }
+                }
+            }
+        }
+
+        serde_json::to_vec(&serde_json::Value::Object(merged)).ok()
+    }
+
     /// Apply an operation received from a peer.
     ///
     /// Validates the payload checksum, then — in a single transaction —
@@ -430,6 +475,7 @@ pub mod operations {
         // The operation is still applied (the caller can resolve later); the
         // conflict row is what makes the situation visible instead of silently
         // picking one value.
+        let mut merged_payload: Option<Vec<u8>> = None;
         let existing = sqlx::query(
             "SELECT id, causal_metadata, created_at FROM operation_journal
              WHERE dataset_id = ? AND entity_id = ? AND origin_node_id != ?
@@ -455,7 +501,7 @@ pub mod operations {
                 let remote_wins = match policy {
                     "remote_wins" | "remote" => true,
                     "local_wins" | "local" => false,
-                    "last_write_wins" | "lww" => {
+                    "last_write_wins" | "lww" | "merge_fields" | "merge" => {
                         let local_time = DateTime::parse_from_rfc3339(&existing_created)
                             .map(|value| value.with_timezone(&Utc))
                             .unwrap_or(op.created_at);
@@ -465,10 +511,43 @@ pub mod operations {
                 };
                 let auto_resolve = matches!(
                     policy,
-                    "remote_wins" | "remote" | "local_wins" | "local" | "last_write_wins" | "lww"
+                    "remote_wins"
+                        | "remote"
+                        | "local_wins"
+                        | "local"
+                        | "last_write_wins"
+                        | "lww"
+                        | "merge_fields"
+                        | "merge"
                 );
-                let resolution =
-                    auto_resolve.then_some(if remote_wins { "remote" } else { "local" });
+                if matches!(policy, "merge_fields" | "merge") {
+                    let local_payload: Vec<u8> =
+                        sqlx::query_scalar("SELECT payload FROM operation_journal WHERE id = ?")
+                            .bind(&existing_id)
+                            .fetch_one(&mut *tx)
+                            .await?;
+                    let local_node: String = sqlx::query_scalar(
+                        "SELECT origin_node_id FROM operation_journal WHERE id = ?",
+                    )
+                    .bind(&existing_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    merged_payload = merge_payloads(
+                        &local_payload,
+                        &op.payload,
+                        &existing_created,
+                        &op.created_at.to_rfc3339(),
+                        &local_node,
+                        &op.origin_node_id,
+                    );
+                }
+                let resolution = auto_resolve.then_some(if merged_payload.is_some() {
+                    "merged"
+                } else if remote_wins {
+                    "remote"
+                } else {
+                    "local"
+                });
                 let resolved_at = resolution.map(|_| Utc::now().to_rfc3339());
                 sqlx::query(
                     "INSERT INTO conflicts
@@ -487,9 +566,12 @@ pub mod operations {
                 .execute(&mut *tx)
                 .await?;
 
-                if !remote_wins {
-                    // Local state wins: do not journal the remote operation,
-                    // but advance the checkpoint so it is not redelivered.
+                if !remote_wins && merged_payload.is_none() {
+                    // Local state wins and there is nothing to merge: do not
+                    // journal the remote operation, but advance the checkpoint
+                    // so it is not redelivered. A successfully merged payload
+                    // is always applied, even when the remote op is older,
+                    // because it carries fields only the remote side has.
                     let now = Utc::now().to_rfc3339();
                     sqlx::query(
                         "INSERT INTO replication_checkpoints (peer_id, dataset_id, last_acked_seq, last_applied_seq, updated_at)
@@ -510,6 +592,12 @@ pub mod operations {
             }
         }
 
+        let effective_payload = merged_payload.as_deref().unwrap_or(&op.payload);
+        let effective_checksum = if merged_payload.is_some() {
+            compute_checksum(effective_payload)
+        } else {
+            op.checksum
+        };
         let causal_json = serde_json::to_string(&op.causal_metadata)?;
         // OR IGNORE guards against re-storing a row we already have (for
         // example an operation this node originated and is now echoed back).
@@ -526,10 +614,10 @@ pub mod operations {
         .bind(op.origin_seq as i64)
         .bind(op.op_type as i32)
         .bind(op.schema_version as i32)
-        .bind(&op.payload)
+        .bind(effective_payload)
         .bind(causal_json)
         .bind(op.created_at.to_rfc3339())
-        .bind(&op.checksum[..])
+        .bind(&effective_checksum[..])
         .execute(&mut *tx)
         .await?;
 
@@ -1535,5 +1623,52 @@ mod spool_tests {
         let drained = drain_batch(pool, 10).await.unwrap();
         let payloads: Vec<&[u8]> = drained.iter().map(|r| r.payload.as_slice()).collect();
         assert_eq!(payloads, vec![b"crit-1", b"crit-2", b"crit-3"]);
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::operations::merge_payloads;
+
+    #[test]
+    fn merge_keeps_disjoint_fields_and_prefers_later_timestamp() {
+        let local = br#"{"name":"old","email":"a@example.com"}"#;
+        let remote = br#"{"name":"new","phone":"123"}"#;
+        let merged = merge_payloads(
+            local,
+            remote,
+            "2026-01-01T00:00:00Z",
+            "2026-01-02T00:00:00Z",
+            "node-a",
+            "node-b",
+        )
+        .expect("valid JSON objects merge");
+        let value: serde_json::Value = serde_json::from_slice(&merged).unwrap();
+        assert_eq!(value["name"], "new");
+        assert_eq!(value["email"], "a@example.com");
+        assert_eq!(value["phone"], "123");
+    }
+
+    #[test]
+    fn merge_tie_break_is_deterministic_by_node_id() {
+        let local = br#"{"name":"a"}"#;
+        let remote = br#"{"name":"b"}"#;
+        let merged = merge_payloads(
+            local,
+            remote,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            "node-a",
+            "node-b",
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&merged).unwrap();
+        // node-b sorts after node-a and wins the tie on every replica.
+        assert_eq!(value["name"], "b");
+    }
+
+    #[test]
+    fn non_object_payloads_are_not_merged() {
+        assert!(merge_payloads(b"not-json", b"{}", "a", "b", "n1", "n2").is_none());
     }
 }

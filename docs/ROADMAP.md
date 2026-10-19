@@ -140,7 +140,8 @@
 - [x] `remote_wins`, `local_wins`, and `last_write_wins` policies
 - [x] Schema-version mismatch detection/rejection
 - [x] Manual `dataset schema` migration-version update
-- [ ] Automated schema migration and CRDT / field-level merge semantics
+- [x] Field-level `merge_fields` conflict policy (deterministic LWW-register over JSON fields)
+- [ ] Automated schema migration and full CRDT (cr-sqlite) support
 
 ## Phase 7: Snapshots, Backup, and Recovery
 
@@ -175,7 +176,7 @@
 
 - [ ] MQTT adapter for IoT ingestion
 - [ ] Developer tooling integrations
-- [ ] CRDT support for multi-writer datasets
+- [ ] Full CRDT support for multi-writer datasets (field-level `merge_fields` LWW merge shipped)
 - [ ] Gossip-based membership for larger clusters
 
 ## Status Legend

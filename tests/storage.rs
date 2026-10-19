@@ -685,3 +685,160 @@ fn schema_version_can_be_updated_after_migration() {
         );
     });
 }
+
+async fn register_orders_with_policy(storage: &Storage, policy: &str) {
+    let dataset = storage::datasets::Dataset {
+        dataset_id: "orders".to_string(),
+        schema_version: 1,
+        conflict_policy: policy.to_string(),
+        table_allowlist: vec!["orders".to_string()],
+        created_at: chrono::Utc::now(),
+    };
+    storage::datasets::register_dataset(storage.pool(), &dataset)
+        .await
+        .unwrap();
+}
+
+fn remote_update_op(
+    payload: &[u8],
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> storage::operations::Operation {
+    let mut causal = storage::operations::VersionVector::new();
+    causal.increment("node-b");
+    storage::operations::Operation {
+        id: Uuid::new_v4(),
+        dataset_id: "orders".to_string(),
+        entity_id: "order-1".to_string(),
+        origin_node_id: "node-b".to_string(),
+        origin_seq: 1,
+        op_type: storage::operations::OperationType::Update,
+        schema_version: 1,
+        payload: payload.to_vec(),
+        causal_metadata: causal,
+        created_at,
+        checksum: storage::operations::compute_checksum(payload),
+    }
+}
+
+async fn stored_remote_payload(storage: &Storage) -> serde_json::Value {
+    let ops = storage::operations::get_operations_since(storage.pool(), "orders", "node-b", 0, 10)
+        .await
+        .unwrap();
+    serde_json::from_slice(&ops[0].payload).unwrap()
+}
+
+#[test]
+fn merge_fields_policy_combines_disjoint_fields() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders_with_policy(&storage, "merge_fields").await;
+
+        storage::operations::append_local_operation(
+            storage.pool(),
+            storage::operations::LocalOperation {
+                dataset_id: "orders".to_string(),
+                entity_id: "order-1".to_string(),
+                op_type: storage::operations::OperationType::Update,
+                schema_version: 1,
+                payload: b"{\"name\":\"old\",\"email\":\"a@example.com\"}".to_vec(),
+                origin_node_id: "node-a".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let remote = remote_update_op(
+            b"{\"name\":\"new\",\"phone\":\"123\"}",
+            chrono::Utc::now() + chrono::Duration::seconds(1),
+        );
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &remote)
+            .await
+            .unwrap();
+        assert_eq!(outcome, storage::operations::ApplyOutcome::Applied);
+
+        let conflicts = storage::conflicts::list_conflicts(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!(conflicts[0].resolution.as_deref(), Some("merged"));
+        assert!(conflicts[0].resolved_at.is_some());
+
+        let merged = stored_remote_payload(&storage).await;
+        assert_eq!(merged["name"], "new");
+        assert_eq!(merged["email"], "a@example.com");
+        assert_eq!(merged["phone"], "123");
+    });
+}
+
+#[test]
+fn merge_fields_applies_remote_when_older_and_disjoint() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders_with_policy(&storage, "merge_fields").await;
+
+        storage::operations::append_local_operation(
+            storage.pool(),
+            storage::operations::LocalOperation {
+                dataset_id: "orders".to_string(),
+                entity_id: "order-1".to_string(),
+                op_type: storage::operations::OperationType::Update,
+                schema_version: 1,
+                payload: b"{\"name\":\"new\",\"email\":\"a@example.com\"}".to_vec(),
+                origin_node_id: "node-a".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let remote = remote_update_op(
+            b"{\"name\":\"old\",\"phone\":\"123\"}",
+            chrono::Utc::now() - chrono::Duration::seconds(1),
+        );
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &remote)
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            storage::operations::ApplyOutcome::Applied,
+            "an older remote op still contributes fields it uniquely has"
+        );
+
+        let merged = stored_remote_payload(&storage).await;
+        assert_eq!(merged["name"], "new", "newer local value wins the overlap");
+        assert_eq!(merged["email"], "a@example.com");
+        assert_eq!(merged["phone"], "123");
+    });
+}
+
+#[test]
+fn merge_fields_falls_back_to_lww_for_non_object_payloads() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::new(dir.path()).await.unwrap();
+        register_orders_with_policy(&storage, "merge_fields").await;
+
+        storage::operations::append_local_operation(
+            storage.pool(),
+            storage::operations::LocalOperation {
+                dataset_id: "orders".to_string(),
+                entity_id: "order-1".to_string(),
+                op_type: storage::operations::OperationType::Update,
+                schema_version: 1,
+                payload: b"\"local\"".to_vec(),
+                origin_node_id: "node-a".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let remote = remote_update_op(
+            b"\"remote\"",
+            chrono::Utc::now() - chrono::Duration::seconds(1),
+        );
+        let outcome = storage::operations::apply_remote_operation(storage.pool(), &remote)
+            .await
+            .unwrap();
+        assert_eq!(outcome, storage::operations::ApplyOutcome::Rejected);
+    });
+}
