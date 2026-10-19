@@ -304,7 +304,7 @@ Full shipped/blocked/rejected detail: [`QUEUE_STATUS.md`](QUEUE_STATUS.md).
 - [Architecture Decisions](docs/DECISIONS.md)
 - [Known Issues](docs/KNOWN_ISSUES.md)
 
-## Fleet sync with PyTerrainMap (planned integration)
+## Fleet sync with PyTerrainMap (operation-capture bridge)
 
 SyncFleet and [PyTerrainMap](https://github.com/Mullassery/PyTerrainMap) are
 complementary tools. PyTerrainMap is an append-only, H3-indexed observation
@@ -327,23 +327,22 @@ service or broker in the middle.
 - SyncFleet's mutual-TLS 1.3 transport, enrollment, and per-dataset ACLs supply
   the transport security that a fleet map-sharing protocol needs.
 
-**Status: not wired up yet.** This pairing is a design goal, not a working
-feature. Three gaps must be closed first:
+**Status: operation capture is implemented in PyTerrainMap.**
+`pyterrain_map.syncfleet.SyncFleetBridge` records observations as
+`syncfleet dataset apply` operations and registers the dataset; its test runs
+the real SyncFleet binary and checks the SQLite `operation_journal`. See
+[PyTerrainMap's integration guide](https://github.com/Mullassery/PyTerrainMap/blob/main/docs/SYNCFLEET_INTEGRATION.md).
 
-1. **State projection.** SyncFleet currently replicates its operation *journal*
-   (dedup + checkpoint + journal append) but does not yet materialize operations
-   into the allowlisted user tables, so a peer's observation table is not updated
-   by a received operation.
+Remaining gaps:
+
+1. **State projection.** SyncFleet replicates its operation *journal* but does
+   not yet materialize operations into the allowlisted user tables.
 2. **Storage substrate.** SyncFleet is SQLite-only; PyTerrainMap's live
-   persistence is PostgreSQL (its SQLite backend is schema-only today). The two
-   need a shared, live SQLite observation table (or a Postgres backend in
-   SyncFleet).
-3. **Write path.** Observations written through PyTerrainMap's API are not yet
-   emitted as SyncFleet operations; an outbox/CDC bridge is needed so local
-   writes enter the operation journal.
+   persistence is PostgreSQL.
+3. **Automatic write path.** The bridge must be called explicitly;
+   `TerrainMap.push_observation` does not emit operations automatically.
 
-Until (1)–(3) land, treat the two as independent, complementary tools that share
-a vocabulary — do not rely on them for automatic fleet map sharing.
+Do not rely on automatic fleet map sharing yet.
 
 ## Part of the robotics & autonomy family
 
