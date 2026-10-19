@@ -274,6 +274,11 @@ See [ROADMAP.md](docs/ROADMAP.md) for details.
 
 ---
 
+## Queue status
+
+Shipped, blocked/failed, and rejected work for this repository is documented in
+[`QUEUE_STATUS.md`](QUEUE_STATUS.md).
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
