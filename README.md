@@ -58,9 +58,10 @@ Being explicit about scope:
 - **Not finished.** This is an actively developed project. Today you can
   initialize nodes, manage datasets and peers, issue/redeem enrollment tokens,
   pin certificates, and inspect the journal. Automated replication and the
-  background daemon are wired; concurrent-write conflicts are detected and
-  recorded for manual resolution. Policy-based automatic resolution and mDNS
-  interface binding remain on the [roadmap](docs/ROADMAP.md).
+  background daemon are wired. Concurrent writes are detected; policy-based
+  resolution (`remote_wins`, `local_wins`, `last_write_wins`, `merge_fields`)
+  is available, while full multi-writer CRDT support, mDNS interface binding,
+  and daemon stop/restart remain on the [roadmap](docs/ROADMAP.md).
 - **Not hardened for the public internet out of the box.** The intended
   deployments are trusted LANs/VPNs between nodes you control.
 
@@ -211,10 +212,11 @@ The wrapper locates the native executable in this order:
 2. a binary **bundled inside the installed wheel** (`syncfleet/bin/`),
 3. `syncfleet` found on your `PATH` (skipping the wrapper itself).
 
-Wheels produced by the release workflow bundle the native binary for their
-platform, so `pip install syncfleet` works with no extra setup. If you install a
-pure-Python wheel without a bundled binary, install the native CLI separately
-and point `SYNCFLEET_BIN` at it:
+As of 0.7.0, PyPI publishes a **macOS universal2 wheel** (with the native
+binary bundled) plus an sdist. The release workflow also defines Linux, macOS
+Intel/ARM, and Windows wheels, but those are not published for 0.7.0. On other
+platforms, build the native CLI and point `SYNCFLEET_BIN` at it (see
+[Install](docs/INSTALL.md)):
 
 ```bash
 export SYNCFLEET_BIN=/usr/local/bin/syncfleet
@@ -249,9 +251,10 @@ than failing silently.
 - `doctor` diagnostics and journal inspection/compaction
 - Python wrapper + PyPI packaging
 
-Not implemented yet: automatic/policy conflict resolution (concurrent writes
-are detected and recorded for manual resolution), mDNS interface binding, and
-daemon process control (`stop`/`restart`).
+Not implemented yet: full multi-writer CRDT support (`cr-sqlite`), mDNS
+interface binding, daemon process control (`stop`/`restart`), and automatic
+schema migration. Conflict policies (`remote_wins`, `local_wins`,
+`last_write_wins`, `merge_fields`) are implemented.
 
 See [ROADMAP.md](docs/ROADMAP.md) for details.
 
@@ -278,7 +281,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for details.
 ## Known issues and deferred work
 
 **Blocked / failed:**
-- CRDT/field-level merge, mDNS interface binding, relay/NAT.
+- Full multi-writer CRDT (`cr-sqlite`), mDNS interface binding, relay/NAT.
 
 **Rejected / deferred:**
 - A message broker.
@@ -287,6 +290,10 @@ Full shipped/blocked/rejected detail: [`QUEUE_STATUS.md`](QUEUE_STATUS.md).
 
 ## Documentation
 
+- [Documentation index](docs/README.md)
+- [Install](docs/INSTALL.md)
+- [Project status](docs/STATUS.md)
+- [Comparison](docs/COMPARISON.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Security Model](docs/SECURITY.md)
