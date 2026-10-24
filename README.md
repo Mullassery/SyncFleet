@@ -1,7 +1,6 @@
 # SyncFleet
 
 [![PyPI](https://img.shields.io/pypi/v/syncfleet.svg)](https://pypi.org/project/syncfleet/)
-[![Graphify](https://img.shields.io/badge/Graphify-knowledge%20graph-blue)](https://github.com/Graphify-Labs/graphify)
 
 A secure, local-first, peer-to-peer edge database synchronization engine.
 
@@ -286,7 +285,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for details.
 **Rejected / deferred:**
 - A message broker.
 
-Full shipped/blocked/rejected detail: [`QUEUE_STATUS.md`](QUEUE_STATUS.md).
+Full shipped/blocked/rejected detail: [`docs/internal/QUEUE_STATUS.md`](docs/internal/QUEUE_STATUS.md).
 
 ## Documentation
 

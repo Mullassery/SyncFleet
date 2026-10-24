@@ -30,7 +30,7 @@
 
 ## Maintainer / policy
 
-- [`QUEUE_STATUS.md`](../QUEUE_STATUS.md) — shipped/blocked/rejected summary
-- [`AUDIT_FINDINGS.md`](../AUDIT_FINDINGS.md) — repository audit notes
-- [`BUNDLE_ROLE.md`](../BUNDLE_ROLE.md) — portfolio positioning
-- [`COMPETITIVE_INTELLIGENCE.md`](../COMPETITIVE_INTELLIGENCE.md) — competitive process
+- [`internal/QUEUE_STATUS.md`](internal/QUEUE_STATUS.md) — shipped/blocked/rejected summary
+- [`internal/AUDIT_FINDINGS.md`](internal/AUDIT_FINDINGS.md) — repository audit notes
+- [`internal/BUNDLE_ROLE.md`](internal/BUNDLE_ROLE.md) — portfolio positioning
+- [`internal/COMPETITIVE_INTELLIGENCE.md`](internal/COMPETITIVE_INTELLIGENCE.md) — competitive process
