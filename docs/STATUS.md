@@ -29,7 +29,7 @@
 | PyPI publishing uses `PYPI_API_TOKEN` | Not OIDC Trusted Publishing | Open |
 | Full multi-writer CRDT (`cr-sqlite`) | `merge_fields` covers disjoint JSON fields only | Planned |
 | mDNS interface binding | Discovery binds defaults only | Planned |
-| Daemon `stop`/`restart` PID management | No process control | Planned |
+| Daemon `stop`/`restart` PID management | No process control | Implemented (2026-10-25; Unix pid file + SIGTERM) |
 | Automatic schema migration | Manual `dataset schema` update only | Planned |
 | Relay/NAT traversal | Peers must be mutually reachable | Planned |
 | Alpha maturity | API/config may change | By design |

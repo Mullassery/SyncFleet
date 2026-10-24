@@ -1258,6 +1258,152 @@ async fn cmd_journal(config: &SyncFleetConfig, args: JournalArgs) -> Result<()> 
     result
 }
 
+fn read_daemon_pid(config: &SyncFleetConfig) -> Option<u32> {
+    std::fs::read_to_string(&config.daemon.pid_file)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+}
+
+#[cfg(unix)]
+fn daemon_pid_alive(pid: u32) -> bool {
+    // Signal 0 performs error checking without sending a signal. EPERM means
+    // the process exists but belongs to another user, which still counts.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn daemon_pid_alive(_pid: u32) -> bool {
+    false
+}
+
+fn write_daemon_pid(config: &SyncFleetConfig, pid: u32) -> Result<()> {
+    if let Some(parent) = config.daemon.pid_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&config.daemon.pid_file, format!("{pid}\n"))?;
+    Ok(())
+}
+
+fn clear_daemon_pid(config: &SyncFleetConfig) {
+    let _ = std::fs::remove_file(&config.daemon.pid_file);
+}
+
+struct PidFileGuard<'a> {
+    config: &'a SyncFleetConfig,
+}
+
+impl Drop for PidFileGuard<'_> {
+    fn drop(&mut self) {
+        clear_daemon_pid(self.config);
+    }
+}
+
+#[cfg(unix)]
+fn spawn_background_daemon(config: &SyncFleetConfig) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let exe = std::env::current_exe()?;
+    let args: Vec<std::ffi::OsString> = std::env::args_os()
+        .skip(1)
+        .filter(|arg| arg != "--background")
+        .collect();
+    std::fs::create_dir_all(&config.node.data_dir)?;
+    let log_path = config.node.data_dir.join("syncfleet.log");
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_err = log.try_clone()?;
+
+    let mut command = Command::new(exe);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(log)
+        .stderr(log_err);
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn()?;
+    let child_pid = child.id();
+
+    for _ in 0..50 {
+        if let Some(pid) = read_daemon_pid(config) {
+            println!(
+                "SyncFleet daemon started in the background (pid {pid}). Logs: {}",
+                log_path.display()
+            );
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(SyncFleetError::Internal(format!(
+        "daemon child (pid {child_pid}) did not write {}; see {}",
+        config.daemon.pid_file.display(),
+        log_path.display()
+    )))
+}
+
+#[cfg(not(unix))]
+fn spawn_background_daemon(_config: &SyncFleetConfig) -> Result<()> {
+    Err(SyncFleetError::Internal(
+        "background daemon mode is only supported on Unix-like platforms".to_string(),
+    ))
+}
+
+async fn stop_daemon(config: &SyncFleetConfig) -> Result<()> {
+    #[cfg(not(unix))]
+    {
+        let _ = config;
+        return Err(SyncFleetError::Internal(
+            "daemon stop is only supported on Unix-like platforms".to_string(),
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let Some(pid) = read_daemon_pid(config) else {
+            return Err(SyncFleetError::NotFound(
+                "daemon is not running (no pid file)".to_string(),
+            ));
+        };
+        if !daemon_pid_alive(pid) {
+            clear_daemon_pid(config);
+            return Err(SyncFleetError::NotFound(format!(
+                "daemon pid {pid} is not running; removed stale pid file"
+            )));
+        }
+        let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        if result != 0 {
+            return Err(SyncFleetError::Internal(format!(
+                "failed to signal daemon pid {pid}: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(config.daemon.shutdown_timeout_sec);
+        while tokio::time::Instant::now() < deadline {
+            if !daemon_pid_alive(pid) {
+                clear_daemon_pid(config);
+                println!("SyncFleet daemon stopped (pid {pid}).");
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Err(SyncFleetError::Internal(format!(
+            "daemon pid {pid} did not exit within {}s",
+            config.daemon.shutdown_timeout_sec
+        )))
+    }
+}
+
 async fn cmd_daemon(config: &SyncFleetConfig, args: DaemonArgs) -> Result<()> {
     match args.action {
         DaemonAction::Start { background } => {
@@ -1282,12 +1428,22 @@ async fn cmd_daemon(config: &SyncFleetConfig, args: DaemonArgs) -> Result<()> {
             }
 
             if background {
-                println!("Note: --background is not supported yet; running in the foreground.");
+                return spawn_background_daemon(config);
+            }
+            if let Some(pid) = read_daemon_pid(config) {
+                if daemon_pid_alive(pid) {
+                    return Err(SyncFleetError::Internal(format!(
+                        "daemon is already running (pid {pid})"
+                    )));
+                }
+                clear_daemon_pid(config);
             }
 
             let acceptor = build_server_acceptor(config, data_dir)?;
             let listener = TcpListener::bind(&config.network.listen_addr).await?;
             let local_addr = listener.local_addr()?;
+            write_daemon_pid(config, std::process::id())?;
+            let _pid_guard = PidFileGuard { config };
             let storage = open_storage(config).await?;
 
             let handle = crate::net::spawn_server_with_options(
@@ -1444,14 +1600,15 @@ async fn cmd_daemon(config: &SyncFleetConfig, args: DaemonArgs) -> Result<()> {
             storage.close().await;
             Ok(())
         }
-        DaemonAction::Stop => Err(SyncFleetError::Internal(
-            "Daemon stop is not implemented yet; run the foreground daemon and press Ctrl-C."
-                .to_string(),
-        )),
-        DaemonAction::Restart => Err(SyncFleetError::Internal(
-            "Daemon restart is not implemented yet; stop and start the daemon manually."
-                .to_string(),
-        )),
+        DaemonAction::Stop => stop_daemon(config).await,
+        DaemonAction::Restart => {
+            match stop_daemon(config).await {
+                Ok(()) => {}
+                Err(SyncFleetError::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+            spawn_background_daemon(config)
+        }
     }
 }
 
@@ -1592,4 +1749,22 @@ async fn cmd_doctor(config: &SyncFleetConfig, args: DoctorArgs) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod daemon_pid_tests {
+    use super::*;
+
+    #[test]
+    fn pid_file_round_trips_and_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = SyncFleetConfig::default();
+        config.daemon.pid_file = dir.path().join("syncfleet.pid");
+
+        assert_eq!(read_daemon_pid(&config), None);
+        write_daemon_pid(&config, 4242).unwrap();
+        assert_eq!(read_daemon_pid(&config), Some(4242));
+        clear_daemon_pid(&config);
+        assert_eq!(read_daemon_pid(&config), None);
+    }
 }

@@ -72,6 +72,9 @@ typenum = "1.17"
 
 # Signal handling (included in tokio)
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = ["mdns"]
 mdns = ["mdns-sd"]

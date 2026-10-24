@@ -13,7 +13,7 @@
 - [x] Commands: init, status, config validate, dataset list, peer list, daemon start/stop
 - [x] Configuration file parsing (TOML)
 - [x] Structured logging with tracing
-- [ ] Graceful shutdown handling (deferred with daemon, Phase 8)
+- [x] Graceful shutdown handling (Ctrl-C foreground shutdown; pid-file/SIGTERM stop and restart)
 
 ### Milestone 1.3 - Node Identity ✓
 - [x] Ed25519 key generation (using `ed25519-dalek`)

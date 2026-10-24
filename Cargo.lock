@@ -2920,6 +2920,7 @@ dependencies = [
  "config",
  "ed25519-dalek",
  "hex",
+ "libc",
  "mdns-sd",
  "metrics 0.21.1",
  "metrics-exporter-prometheus",
