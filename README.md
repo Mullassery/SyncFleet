@@ -71,7 +71,7 @@ Being explicit about scope:
 ### 1. Build
 
 ```bash
-git clone https://github.com/Mullassery/SyncFleet
+git clone ../SyncFleet
 cd SyncFleet
 cargo build --release
 export PATH="$PWD/target/release:$PATH"
@@ -305,7 +305,7 @@ Full shipped/blocked/rejected detail: [`docs/internal/QUEUE_STATUS.md`](docs/int
 
 ## Fleet sync with PyTerrainMap (operation-capture bridge)
 
-SyncFleet and [PyTerrainMap](https://github.com/Mullassery/PyTerrainMap) are
+SyncFleet and [PyTerrainMap](../PyTerrainMap) are
 complementary tools. PyTerrainMap is an append-only, H3-indexed observation
 store for multi-robot terrain data; SyncFleet replicates selected SQLite tables
 between authorized peers. Used together, they are intended to give a
@@ -330,7 +330,7 @@ service or broker in the middle.
 `pyterrain_map.syncfleet.SyncFleetBridge` records observations as
 `syncfleet dataset apply` operations and registers the dataset; its test runs
 the real SyncFleet binary and checks the SQLite `operation_journal`. See
-[PyTerrainMap's integration guide](https://github.com/Mullassery/PyTerrainMap/blob/main/docs/SYNCFLEET_INTEGRATION.md).
+[PyTerrainMap's integration guide](../PyTerrainMap/blob/main/docs/SYNCFLEET_INTEGRATION.md).
 
 Remaining gaps:
 
@@ -349,18 +349,18 @@ SyncFleet is one of six complementary, composable tools in the Mullassery **robo
 
 | Tool | Role | What it does |
 |---|---|---|
-| [PyRoboVision](https://github.com/Mullassery/PyRoboVision) | Perception | Multi-object tracker (Kalman filter + Hungarian algorithm) and trajectory predictor for robot perception. |
-| [PyTerrainMap](https://github.com/Mullassery/PyTerrainMap) | Mapping / SLAM | Fuses multi-robot terrain observations into a spatial-temporal store, with H3 spatial indexing and SLAM. |
-| [PyRoboSimulator](https://github.com/Mullassery/PyRoboSimulator) | Simulation | World simulator for autonomous systems, with a FastAPI backend. |
-| [PyRoboFrames](https://github.com/Mullassery/PyRoboFrames) | Learning data | Rust-backed ML dataloader for robot-learning datasets (native LeRobot format, Apple Silicon hardware video decode). |
-| [PyRoboReplay](https://github.com/Mullassery/PyRoboReplay) | Mission forensics | Forensic-debugging and causal-analysis engine for autonomous robot mission replay. |
-| [SyncFleet](https://github.com/Mullassery/SyncFleet) | Fleet coordination | **This project** — Rust + SQLite, peer-to-peer state sync for robotics fleets — mutual-TLS 1.3, version-vector replication, mDNS discovery; conflict resolution on the roadmap. |
+| [PyRoboVision](../PyRoboVision) | Perception | Multi-object tracker (Kalman filter + Hungarian algorithm) and trajectory predictor for robot perception. |
+| [PyTerrainMap](../PyTerrainMap) | Mapping / SLAM | Fuses multi-robot terrain observations into a spatial-temporal store, with H3 spatial indexing and SLAM. |
+| [PyRoboSimulator](../PyRoboSimulator) | Simulation | World simulator for autonomous systems, with a FastAPI backend. |
+| [PyRoboFrames](../PyRoboFrames) | Learning data | Rust-backed ML dataloader for robot-learning datasets (native LeRobot format, Apple Silicon hardware video decode). |
+| [PyRoboReplay](../PyRoboReplay) | Mission forensics | Forensic-debugging and causal-analysis engine for autonomous robot mission replay. |
+| [SyncFleet](../SyncFleet) | Fleet coordination | **This project** — Rust + SQLite, peer-to-peer state sync for robotics fleets — mutual-TLS 1.3, version-vector replication, mDNS discovery; conflict resolution on the roadmap. |
 
 Each works standalone, but they're complementary by design. The planned outbox/CDC bridge to PyTerrainMap (detailed above) will allow terrain state to sync across fleets without a central database.
 
-[Browse all projects →](https://github.com/Mullassery?tab=repositories)
+[Browse all projects →](../Mullassery-profile)
 
-**Also from Mullassery:** [TinyBridge](https://github.com/Mullassery/TinyBridge) — macOS-native Linux VM runtime for local edge testing · [PyDeepMesh](https://github.com/Mullassery/PyDeepMesh) — dependency-graph and vulnerability intelligence
+**Also from Mullassery:** [TinyBridge](../TinyBridge) — macOS-native Linux VM runtime for local edge testing · [PyDeepMesh](../PyDeepMesh) — dependency-graph and vulnerability intelligence
 
 ## License
 

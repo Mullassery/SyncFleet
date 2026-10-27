@@ -14,7 +14,7 @@
 #### From Release (Future)
 ```bash
 # Linux
-curl -L https://github.com/Mullassery/SyncFleet/releases/latest/download/syncfleet-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L ../SyncFleet/releases/latest/download/syncfleet-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv syncfleet /usr/local/bin/
 
 # macOS
@@ -23,7 +23,7 @@ brew install mullassery/tap/syncfleet
 
 #### From Source
 ```bash
-git clone https://github.com/Mullassery/SyncFleet
+git clone ../SyncFleet
 cd SyncFleet
 cargo install --path . --locked
 ```

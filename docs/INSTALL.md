@@ -8,7 +8,7 @@ does **not** reimplement the engine; it finds and runs the native binary.
 Requires a stable Rust toolchain (MSRV **1.89**).
 
 ```bash
-git clone https://github.com/Mullassery/SyncFleet
+git clone ../SyncFleet
 cd SyncFleet
 cargo build --release
 export PATH="$PWD/target/release:$PATH"

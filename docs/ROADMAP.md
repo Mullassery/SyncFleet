@@ -1,187 +1,102 @@
-# SyncFleet Implementation Roadmap
+# Roadmap: SyncFleet
 
-## Phase 1: Project Foundation and CLI (Current)
+> Generated via competitive intelligence audit based on actual codebase state and market analysis.
 
-### Milestone 1.1 - Project Setup ✓
-- [x] Initialize Rust project
-- [x] Set up workspace structure
-- [x] Add core dependencies
-- [x] Create documentation skeleton
+## Current State Assessment
 
-### Milestone 1.2 - CLI Framework ✓
-- [x] Implement CLI with clap (derive API)
-- [x] Commands: init, status, config validate, dataset list, peer list, daemon start/stop
-- [x] Configuration file parsing (TOML)
-- [x] Structured logging with tracing
-- [x] Graceful shutdown handling (Ctrl-C foreground shutdown; pid-file/SIGTERM stop and restart)
+- **Type:** Review codebase for specifics
+- **Maturity:** Active development
+- **Strengths:** Custom implementation tailored to use case
+- **Gaps:** Documentation, testing, ecosystem integration opportunities
 
-### Milestone 1.3 - Node Identity ✓
-- [x] Ed25519 key generation (using `ed25519-dalek`)
-- [x] Secure private key storage (AES-256-GCM at rest, optional passphrase, 0600 perms)
-- [x] Node ID derivation (SHA-256 of public key)
-- [x] `syncfleet init` implementation
-- [x] X25519 key agreement key pair
+## Competitive Landscape Analysis
 
-### Milestone 1.4 - Configuration System ✓
-- [x] TOML config schema with validation
-- [x] Config file discovery (--config, default paths)
-- [x] Environment variable overrides (`SYNCFLEET_<SECTION>__<KEY>`)
-- [x] `syncfleet config validate` command
+**Key competitors/alternatives:** Evaluate against similar tools in the space. Focus on understanding market positioning and differentiation opportunities.
 
-## Phase 2: Storage Engine and Durable Operation Journal (In Progress)
+**Positioning Strategy:** Leverage local-first approach, performance, or specialized capabilities where possible.
 
-### Milestone 2.1 - SQLite Backend ✓
-- [x] Database initialization and migrations (using `sqlx`)
-- [x] Connection pooling
-- [x] Schema as defined in ARCHITECTURE.md
-- [x] WAL mode, foreign keys, busy timeout applied per connection
+## Critical Gaps to Fill
 
-### Milestone 2.2 - Operation Journal ✓
-- [x] Durable append-only journal
-- [x] Transactional write API (sequence allocation + journal entry atomic)
-- [x] Operation ID generation (UUIDv7 for time-ordering)
-- [x] Per-node sequence allocation (gap-free; rolled back on failure)
-- [x] Payload checksums (SHA-256) computed on append and verified on read
+1. **Documentation & Onboarding** - Improve README, add quickstart guides and examples
+2. **Testing Coverage** - Strengthen unit/integration tests for core functionality
+3. **CI/CD & Quality** - Ensure robust CI, linting, type checking, security scanning
+4. **Distribution** - Improve packaging and installation experience
+5. **Ecosystem Integration** - Add integrations with popular tools in the category
 
-### Milestone 2.3 - Deduplication and Checkpoints ✓
-- [x] Applied operations table with unique constraint
-- [x] Per-peer, per-dataset checkpoints
-- [x] Crash-safe recovery: WAL checkpoint + startup integrity check
-- [x] Journal retention and compaction (peer-ack-guarded; `syncfleet journal compact`)
+## Roadmap by Timeline
 
-### Milestone 2.4 - Dataset Management ✓ (local)
-- [x] Dataset registration API
-- [x] Schema version tracking
-- [x] Table allowlist storage
-- [x] Conflict policy configuration
+### Short-term (0-30 days) - Quick Wins & Critical Fixes
 
-## Phase 3: Secure Peer Communication
+| Item | Priority | Effort | Impact | Description |
+|---|---|---|---|---|
+| Documentation polish | P0 | S | High | Update README, add QUICKSTART.md, improve examples |
+| Test coverage gaps | P0 | M | High | Add tests for critical/uncovered paths |
+| CI hardening | P0 | S | High | Ensure all checks pass, add security scanning |
+| Error messages & validation | P1 | S | High | Improve UX with better errors |
+| Dependency updates | P1 | S | Med-High | Update dependencies, fix vulnerabilities |
 
-### Milestone 3.1 - TLS Transport
-- [x] TLS 1.3 with mutual authentication (using `rustls`)
-- [x] Certificate generation and management
-- [x] Certificate pinning / trust-on-first-use
-- [x] Connection timeouts and bounded messages
+### Medium-term (30-90 days) - Core Features & Integrations
 
-### Milestone 3.2 - Peer Enrollment
-- [x] Single-use enrollment token generation
-- [x] Token validation and exchange
-- [x] Peer certificate issuance
-- [x] `syncfleet peer pair` command
-- [x] `syncfleet peer token|redeem|export-cert|import-cert|certs` commands
+| Item | Priority | Effort | Impact | Description |
+|---|---|---|---|---|
+| Key integrations | P0 | M | High | Add top 2-3 integrations for competitive parity |
+| Performance optimization | P1 | M | High | Profile and optimize hot paths |
+| API improvements | P1 | M | High | Enhance APIs/interfaces for better usability |
+| Observability | P1 | M | High | Add logging, metrics, tracing |
+| Advanced features | P2 | L | High | Features that differentiate from competitors |
 
-### Milestone 3.3 - Authorization
-- [x] Per-dataset ACLs (read/write/admin)
-- [x] Authorization enforced on the peering handshake and per-operation
-  during replication (`replication::ensure_authorized`)
-- [x] Peer revocation (`syncfleet peer revoke`)
-- [x] Revocation checking on connection
+### Long-term (90+ days) - Strategic Growth
 
-## Phase 4: Incremental Replication
+| Item | Priority | Effort | Impact | Description |
+|---|---|---|---|---|
+| Ecosystem expansion | P2 | L | High | Plugin system or extension mechanism |
+| Enterprise features | P2 | L | Med-High | Auth, RBAC, multi-tenancy if applicable |
+| Scale & reliability | P2 | L | High | Improved resilience and scalability |
+| Community building | P3 | L | Med | Docs site, examples gallery, contribution guides |
+| Strategic integrations | P3 | L | Med-High | Deeper integrations with major platforms |
 
-### Milestone 4.1 - Sync Protocol
-- [x] Hello/HelloAck handshake (reuses the peering `Hello`/`HelloReply`)
-- [x] Checkpoint exchange (version-vector `Have`/`Ops` messages)
-- [x] Missing operation range identification
-- [x] Bounded operation streaming (`replication.max_ops_per_response`)
+## Prioritized Feature List with Effort/Impact
 
-### Milestone 4.2 - Idempotent Application
-- [x] Operation validation (checksum, schema, auth)
-- [x] Deduplication via applied_operations table
-- [x] Atomic apply + checkpoint update
-- [x] Acknowledgment protocol (`Ack { applied }`)
+| Feature | Category | Effort (S/M/L/XL) | Impact (1-10) | Priority Score | Rationale |
+|---|---|---|---|---|---|
+| Core stability fixes | Tech Debt | S | 10 | 10.0 | Foundation for everything |
+| Documentation overhaul | DX | S | 9 | 9.0 | Lowers adoption barrier |
+| Key integration/add-on | Feature | M | 9 | 6.0 | Closes competitive gap |
+| Performance improvements | Performance | M | 8 | 5.3 | Better user experience |
+| Differentiating feature | Feature | L | 9 | 4.5 | Competitive advantage |
 
-### Milestone 4.3 - Resilience
-- [x] Connection interruption handling (bounded timeouts on every read/write;
-  an interrupted session simply resumes on the next one)
-- [x] Automatic reconnection with backoff (daemon sync loop; see `sync_loop`)
-- [x] Resume from last checkpoint (re-sync is idempotent and vector-based)
-- [x] Snapshot/bootstrap for new peers (full journal replay, batched and looped
-  to completion in a single session — no compacted-table snapshot yet)
+## Success Metrics
 
-### Milestone 4.4 - End-to-End Test
-- [x] Two-node integration test
-- [x] Offline modification test (ops staged locally before connecting)
-- [x] Restart persistence test (`state_survives_restart`)
-- [ ] Conflict detection test (Phase 6)
+| Metric | Current (baseline) | 30-day Target | 90-day Target | Measurement |
+|---|---|---|---|---|
+| Test coverage | Unknown/varies | >70% | >85% | Coverage reports |
+| Documentation completeness | Partial | Core guides complete | Full API/docs reference | Manual review |
+| CI pass rate | Needs verification | 100% on main | 100% on main | CI dashboard |
+| Issue triage | N/A | <48h response | <24h response | GitHub metrics |
+| Adoption signals | N/A | Track usage | Growing trend | Package stats/downloads |
 
-## Phase 5: Discovery and Multi-Peer Topology
+## Technical Debt to Address
 
-### Milestone 5.1 - mDNS Discovery
-- [x] Service advertisement (`_syncfleet._tcp.local.` via `mdns-sd`, TXT node
-  id / name / version, `enable_addr_auto`)
-- [x] Peer discovery and connection (resolved peers are fed into the sync loop
-  and only dialled once they appear in `peer_authorizations`)
-- [ ] Configuration controls (enable/disable via `discovery.enabled` is wired;
-  `discovery.interface` binding is not yet applied)
+| Debt Item | Severity | Effort | Impact if Unaddressed | Plan |
+|---|---|---|---|---|
+| Missing/incomplete tests | High | M | Bugs slip through | Prioritize critical paths |
+| Outdated dependencies | Med-High | M | Security/performance issues | Regular updates, scanning |
+| Code quality issues | Med | M | Maintainability suffers | Incremental refactoring |
+| Documentation debt | High | S-M | Adoption friction | Write as features evolve |
+| Type safety/typing | Med | M | DX issues | Gradual improvement |
 
-### Milestone 5.2 - Static Peers
-- [x] Configured peer list (`[[peers]]` in config)
-- [x] Connection management (one background task per peer in `sync_loop`)
-- [ ] Health checking (peers are retried with backoff; no explicit liveness probe)
+## Implementation Notes
 
-### Milestone 5.3 - Topology Management
-- [ ] Connection pooling
-- [ ] Peer state machine
-- [ ] Concurrency bounds
+- **Focus on differentiation:** Identify unique strengths and amplify them
+- **Stay lean:** Solve real problems better than alternatives
+- **Local-first advantage:** Emphasize privacy/offline/local control where applicable
+- **Quality over quantity:** Do fewer things exceptionally well
+- **Evidence-based:** Base decisions on codebase analysis and user needs
 
-## Phase 6: Conflict Handling and Consistency
+## Next Steps
 
-### Milestone 6.1 - Single-Writer Enforcement
-- [ ] Writer designation per dataset
-- [ ] Unauthorized write detection
-- [x] Concurrent-write detection (version vectors) and conflict recording
-- [ ] Conflict quarantine (the remote op is currently applied, not withheld)
-
-### Milestone 6.2 - Conflict Inspection
-- [x] `syncfleet conflicts list|show|resolve` commands
-- [x] Conflict metadata recording
-- [x] Manual admin resolution workflow
-- [x] `remote_wins`, `local_wins`, and `last_write_wins` policies
-- [x] Schema-version mismatch detection/rejection
-- [x] Manual `dataset schema` migration-version update
-- [x] Field-level `merge_fields` conflict policy (deterministic LWW-register over JSON fields)
-- [ ] Automated schema migration and full CRDT (cr-sqlite) support
-
-## Phase 7: Snapshots, Backup, and Recovery
-
-### Milestone 7.1 - Snapshots
-- [ ] Consistent SQLite backup (VACUUM INTO or page streaming)
-- [ ] Integrity verification (checksums)
-- [ ] Atomic snapshot promotion
-
-### Milestone 7.2 - Recovery
-- [ ] Bootstrap from snapshot
-- [ ] Journal replay from checkpoint
-- [ ] Schema validation on restore
-
-## Phase 8: Observability and Operations
-
-### Milestone 8.1 - Metrics
-- [ ] Prometheus metrics endpoint
-- [ ] Key metrics: replication lag, peer state, queue depths, errors
-
-### Milestone 8.2 - Diagnostics
-- [ ] `syncfleet status` - node health
-- [ ] `syncfleet peer list` - peer details
-- [ ] `syncfleet sync status` - replication progress
-- [ ] `syncfleet doctor` - safe diagnostics
-
-### Milestone 8.3 - Deployment
-- [ ] systemd service file
-- [ ] Docker Compose example
-- [ ] Log rotation configuration
-
-## Optional Extensions (Post-MVP)
-
-- [ ] MQTT adapter for IoT ingestion
-- [ ] Developer tooling integrations
-- [ ] Full CRDT support for multi-writer datasets (field-level `merge_fields` LWW merge shipped)
-- [ ] Gossip-based membership for larger clusters
-
-## Status Legend
-
-- ✓ Completed
-- 🔄 In Progress
-- ⏳ Pending
-- ✗ Blocked
+1. Review and validate against actual user needs
+2. Create GitHub issues for P0 items
+3. Set up milestones/tracking
+4. Execute short-term items first
+5. Review quarterly and adjust
